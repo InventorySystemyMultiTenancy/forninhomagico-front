@@ -3,6 +3,8 @@ import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom'
 import {
   addFlavor,
   addSlices,
+  cancelOrder,
+  confirmOrderCash,
   createOrder,
   createPosIntent,
   getFlavors,
@@ -19,6 +21,19 @@ const navItems = [
   { to: '/acompanhamento', label: 'Acompanhamento' },
   { to: '/relatorio', label: 'Relatorio' },
 ]
+
+function getPaymentMethodLabel(order) {
+  const method = order?.paymentMethod ?? order?.payment_method ?? ''
+  if (method === 'point' || method === 'card') return '\u{1F4B3} Point'
+  if (method === 'pix') return '\u{1F4F1} Pix'
+  if (method === 'dinheiro' || method === 'cash') return '\u{1F4B5} Dinheiro'
+  return method || ''
+}
+
+function isPaymentMethodCash(order) {
+  const method = order?.paymentMethod ?? order?.payment_method ?? ''
+  return method === 'dinheiro' || method === 'cash'
+}
 
 function getOrderId(order) {
   return order?.id ?? order?.orderId ?? order?.order_id ?? null
@@ -492,6 +507,7 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
   const [submitFeedback, setSubmitFeedback] = useState(null)
 
   const [sendingOrderId, setSendingOrderId] = useState(null)
+  const [cancelingOrderId, setCancelingOrderId] = useState(null)
   const [actionFeedback, setActionFeedback] = useState({})
 
   const addItem = () => {
@@ -541,7 +557,7 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
         })
         createdOrders.push(order)
       }
-      if (paymentMethod === 'point') {
+      if (paymentMethod === 'point' || paymentMethod === 'pix' || paymentMethod === 'card') {
         for (const order of createdOrders) {
           const orderId = getOrderId(order)
           if (orderId) {
@@ -550,6 +566,13 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
         }
         setSubmitFeedback({ type: 'success', message: 'Aguardando pagamento na maquininha...' })
       } else {
+        // dinheiro — confirmar direto
+        for (const order of createdOrders) {
+          const orderId = getOrderId(order)
+          if (orderId) {
+            await confirmOrderCash(orderId)
+          }
+        }
         const count = createdOrders.length
         setSubmitFeedback({ type: 'success', message: `${count > 1 ? `${count} pedidos criados` : 'Pedido criado'} com sucesso!` })
       }
@@ -584,6 +607,34 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
       }))
     } finally {
       setSendingOrderId(null)
+    }
+  }
+
+  const handleConfirmCash = async (orderId) => {
+    try {
+      setSendingOrderId(orderId)
+      setActionFeedback((prev) => ({ ...prev, [orderId]: { type: 'info', message: 'Confirmando...' } }))
+      await confirmOrderCash(orderId)
+      setActionFeedback((prev) => ({ ...prev, [orderId]: { type: 'success', message: 'Pedido confirmado!' } }))
+      await reloadOrders()
+    } catch (err) {
+      setActionFeedback((prev) => ({ ...prev, [orderId]: { type: 'error', message: normalizeErrorMessage(err) } }))
+    } finally {
+      setSendingOrderId(null)
+    }
+  }
+
+  const handleCancelOrder = async (orderId) => {
+    if (!window.confirm('Cancelar este pedido?')) return
+    try {
+      setCancelingOrderId(orderId)
+      setActionFeedback((prev) => ({ ...prev, [orderId]: { type: 'info', message: 'Cancelando...' } }))
+      await cancelOrder(orderId)
+      await reloadOrders()
+    } catch (err) {
+      setActionFeedback((prev) => ({ ...prev, [orderId]: { type: 'error', message: normalizeErrorMessage(err) } }))
+    } finally {
+      setCancelingOrderId(null)
     }
   }
 
@@ -658,9 +709,8 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
             <span>Forma de pagamento</span>
             <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
               <option value="point">Maquininha Point</option>
-              <option value="card">Cartao (Mercado Pago)</option>
               <option value="pix">Pix</option>
-              <option value="cash">Dinheiro</option>
+              <option value="dinheiro">Dinheiro</option>
             </select>
           </label>
           {submitFeedback && (
@@ -676,7 +726,9 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
               </p>
             </div>
             <button className="primary-button" type="submit" disabled={submitting}>
-              {submitting ? 'Enviando...' : 'Enviar para maquininha'}
+              {submitting
+                ? 'Enviando...'
+                : (paymentMethod === 'dinheiro' ? 'Confirmar pedido' : 'Enviar para maquininha')}
             </button>
           </div>
         </form>
@@ -716,24 +768,48 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
                     <p className="text-xs uppercase tracking-[0.2em] text-espresso/50">
                       Pedido #{orderId ?? 'Sem ID'}
                     </p>
-                    <p className="text-sm text-espresso/70">
-                      Status: {status || 'Sem status'}
-                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm text-espresso/70">
+                        Status: {status || 'Sem status'}
+                      </p>
+                      {getPaymentMethodLabel(order) && (
+                        <span className="pill pill-small pill-outline">{getPaymentMethodLabel(order)}</span>
+                      )}
+                    </div>
                     {feedback && (
                       <p className="text-xs text-espresso/60">{feedback.message}</p>
                     )}
                   </div>
-                  <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex flex-wrap items-center gap-2">
                     <p className="text-base font-semibold text-espresso">
                       {formatCurrency(total)}
                     </p>
+                    {isPaymentMethodCash(order) ? (
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={() => handleConfirmCash(orderId)}
+                        disabled={!orderId || sendingOrderId === orderId}
+                      >
+                        {sendingOrderId === orderId ? 'Confirmando...' : 'Confirmar pedido'}
+                      </button>
+                    ) : (
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={() => handleSendToPos(orderId)}
+                        disabled={!orderId || sendingOrderId === orderId}
+                      >
+                        {sendingOrderId === orderId ? 'Enviando...' : 'Enviar para maquininha'}
+                      </button>
+                    )}
                     <button
-                      className="primary-button"
+                      className="ghost-button small"
                       type="button"
-                      onClick={() => handleSendToPos(orderId)}
-                      disabled={!orderId || sendingOrderId === orderId}
+                      onClick={() => handleCancelOrder(orderId)}
+                      disabled={!orderId || cancelingOrderId === orderId}
                     >
-                      {sendingOrderId === orderId ? 'Enviando...' : 'Enviar para maquininha'}
+                      {cancelingOrderId === orderId ? 'Cancelando...' : 'Cancelar'}
                     </button>
                   </div>
                 </div>

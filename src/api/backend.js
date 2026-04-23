@@ -96,3 +96,14 @@ export async function markOrderReady(orderId) {
     body: JSON.stringify({ status: 'pronto' }),
   })
 }
+
+export async function confirmOrderCash(orderId) {
+  return requestJson(`/api/orders/${orderId}/confirm`, {
+    method: 'PATCH',
+    body: JSON.stringify({}),
+  })
+}
+
+export async function cancelOrder(orderId) {
+  return requestJson(`/api/orders/${orderId}`, { method: 'DELETE' })
+}
