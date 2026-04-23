@@ -81,6 +81,28 @@ export async function addFlavor({ name, price, slicesTotal, imageUrl }) {
   })
 }
 
+export async function updateFlavor(flavorId, fields) {
+  return requestJson(`/api/flavors/${flavorId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(fields),
+  })
+}
+
+export async function uploadImage(file) {
+  const formData = new FormData()
+  formData.append('image', file)
+  const fullUrl = `${API_BASE}/api/upload`
+  const response = await fetch(fullUrl, { method: 'POST', body: formData })
+  if (!response.ok) {
+    const body = await readResponseBody(response)
+    const message = buildErrorMessage(response, body)
+    const error = new Error(message || 'Erro ao fazer upload da imagem')
+    error.status = response.status
+    throw error
+  }
+  return readResponseBody(response)
+}
+
 export async function addSlices(flavorId, quantity) {
   return requestJson(`/api/flavors/${flavorId}/slices`, {
     method: 'POST',

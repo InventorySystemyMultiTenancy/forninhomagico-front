@@ -17,6 +17,8 @@ import {
   getStats,
   markOrderReady,
   pickupOrder,
+  updateFlavor,
+  uploadImage,
 } from './api/backend'
 
 const navItems = [
@@ -393,7 +395,9 @@ function DashboardPage({ stats, loadingStats, errorStats, flavors, loadingFlavor
 
 function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
   const [showNewFlavor, setShowNewFlavor] = useState(false)
-  const [newFlavor, setNewFlavor] = useState({ name: '', price: '', slicesTotal: '', imageUrl: '' })
+  const [newFlavor, setNewFlavor] = useState({ name: '', price: '', slicesTotal: '' })
+  const [newFlavorImageFile, setNewFlavorImageFile] = useState(null)
+  const [newFlavorPreview, setNewFlavorPreview] = useState('')
   const [savingFlavor, setSavingFlavor] = useState(false)
   const [flavorFormError, setFlavorFormError] = useState('')
 
@@ -401,6 +405,28 @@ function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
   const [slicesQty, setSlicesQty] = useState(1)
   const [savingSlices, setSavingSlices] = useState(false)
   const [slicesErrors, setSlicesErrors] = useState({})
+
+  const [editingImageFor, setEditingImageFor] = useState(null)
+  const [editImageFile, setEditImageFile] = useState(null)
+  const [editImagePreview, setEditImagePreview] = useState('')
+  const [savingImage, setSavingImage] = useState(false)
+  const [imageErrors, setImageErrors] = useState({})
+
+  const handleNewFlavorImage = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (newFlavorPreview) URL.revokeObjectURL(newFlavorPreview)
+    setNewFlavorImageFile(file)
+    setNewFlavorPreview(URL.createObjectURL(file))
+  }
+
+  const handleEditImage = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (editImagePreview) URL.revokeObjectURL(editImagePreview)
+    setEditImageFile(file)
+    setEditImagePreview(URL.createObjectURL(file))
+  }
 
   const handleSaveFlavor = async (e) => {
     e.preventDefault()
@@ -413,13 +439,21 @@ function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
     try {
       setSavingFlavor(true)
       setFlavorFormError('')
+      let imageUrl
+      if (newFlavorImageFile) {
+        const result = await uploadImage(newFlavorImageFile)
+        imageUrl = result?.url ?? result?.imageUrl
+      }
       await addFlavor({
         name: newFlavor.name.trim(),
         price,
         slicesTotal: Number(newFlavor.slicesTotal) || 0,
-        imageUrl: newFlavor.imageUrl.trim() || undefined,
+        imageUrl,
       })
-      setNewFlavor({ name: '', price: '', slicesTotal: '', imageUrl: '' })
+      if (newFlavorPreview) URL.revokeObjectURL(newFlavorPreview)
+      setNewFlavor({ name: '', price: '', slicesTotal: '' })
+      setNewFlavorImageFile(null)
+      setNewFlavorPreview('')
       setShowNewFlavor(false)
       await reloadFlavors()
     } catch (err) {
@@ -441,6 +475,26 @@ function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
       setSlicesErrors((prev) => ({ ...prev, [flavorId]: normalizeErrorMessage(err) }))
     } finally {
       setSavingSlices(false)
+    }
+  }
+
+  const handleSaveImage = async (flavorId) => {
+    if (!editImageFile) return
+    try {
+      setSavingImage(true)
+      setImageErrors((prev) => ({ ...prev, [flavorId]: '' }))
+      const result = await uploadImage(editImageFile)
+      const url = result?.url ?? result?.imageUrl
+      await updateFlavor(flavorId, { imageUrl: url })
+      if (editImagePreview) URL.revokeObjectURL(editImagePreview)
+      setEditingImageFor(null)
+      setEditImageFile(null)
+      setEditImagePreview('')
+      await reloadFlavors()
+    } catch (err) {
+      setImageErrors((prev) => ({ ...prev, [flavorId]: normalizeErrorMessage(err) }))
+    } finally {
+      setSavingImage(false)
     }
   }
 
@@ -498,13 +552,15 @@ function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
               </label>
             </div>
             <label className="field">
-              <span>URL da imagem (opcional)</span>
+              <span>Imagem do sabor (opcional)</span>
               <input
-                type="url"
-                value={newFlavor.imageUrl}
-                onChange={(e) => setNewFlavor((prev) => ({ ...prev, imageUrl: e.target.value }))}
-                placeholder="https://res.cloudinary.com/.../bolo.jpg"
+                type="file"
+                accept="image/*"
+                onChange={handleNewFlavorImage}
               />
+              {newFlavorPreview && (
+                <img src={newFlavorPreview} alt="preview" className="mt-2 h-24 w-24 rounded-xl object-cover" />
+              )}
             </label>
             {flavorFormError && (
               <p className="text-xs text-espresso/70">{flavorFormError}</p>
@@ -535,23 +591,93 @@ function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
             const slices = getFlavorSlices(flavor)
             const active = isFlavorActive(flavor)
             const isAddingHere = addingSlicesFor === flavorId
+            const isEditingImage = editingImageFor === flavorId
+            const currentImageUrl = flavor?.imageUrl ?? null
 
             return (
               <div key={flavorId ?? name} className="soft-card">
-                <div>
-                  <div className="flex items-center gap-3">
-                    <h3 className="text-lg font-semibold text-espresso">{name}</h3>
-                    <span className={`pill pill-small ${active ? 'pill-dark' : 'pill-outline'}`}>
-                      {active ? 'Ativo' : 'Pausado'}
-                    </span>
+                <div className="flex items-start gap-4">
+                  {/* thumbnail */}
+                  <div
+                    className="flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-[rgba(123,78,43,0.15)] bg-[rgba(229,200,169,0.25)]"
+                    title="Clique para alterar imagem"
+                    onClick={() => {
+                      if (isEditingImage) {
+                        if (editImagePreview) URL.revokeObjectURL(editImagePreview)
+                        setEditingImageFor(null)
+                        setEditImageFile(null)
+                        setEditImagePreview('')
+                      } else {
+                        setEditingImageFor(flavorId)
+                        setEditImageFile(null)
+                        setEditImagePreview('')
+                      }
+                    }}
+                  >
+                    {currentImageUrl ? (
+                      <img src={currentImageUrl} alt={name} className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="text-2xl">🎂</span>
+                    )}
                   </div>
-                  <p className="text-sm text-espresso/60">
-                    {price !== null ? `${formatCurrency(price)} por fatia` : 'Sem preco cadastrado'}
-                  </p>
-                  {slicesErrors[flavorId] && (
-                    <p className="text-xs text-espresso/70 mt-1">{slicesErrors[flavorId]}</p>
-                  )}
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <h3 className="text-lg font-semibold text-espresso">{name}</h3>
+                      <span className={`pill pill-small ${active ? 'pill-dark' : 'pill-outline'}`}>
+                        {active ? 'Ativo' : 'Pausado'}
+                      </span>
+                    </div>
+                    <p className="text-sm text-espresso/60">
+                      {price !== null ? `${formatCurrency(price)} por fatia` : 'Sem preco cadastrado'}
+                    </p>
+                    {slicesErrors[flavorId] && (
+                      <p className="text-xs text-espresso/70 mt-1">{slicesErrors[flavorId]}</p>
+                    )}
+                  </div>
                 </div>
+
+                {/* Formulario de editar imagem */}
+                {isEditingImage && (
+                  <div className="mt-3 flex flex-col gap-2 rounded-xl border border-[rgba(123,78,43,0.2)] bg-white/60 p-3">
+                    <p className="text-xs uppercase tracking-[0.15em] text-espresso/50">Nova imagem</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="flex-1 text-sm text-espresso"
+                        onChange={handleEditImage}
+                        autoFocus
+                      />
+                      <button
+                        className="ghost-button small"
+                        type="button"
+                        onClick={() => handleSaveImage(flavorId)}
+                        disabled={savingImage || !editImageFile}
+                      >
+                        {savingImage ? 'Enviando...' : 'Salvar'}
+                      </button>
+                      <button
+                        className="ghost-button small"
+                        type="button"
+                        onClick={() => {
+                          if (editImagePreview) URL.revokeObjectURL(editImagePreview)
+                          setEditingImageFor(null)
+                          setEditImageFile(null)
+                          setEditImagePreview('')
+                        }}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                    {editImagePreview && (
+                      <img src={editImagePreview} alt="preview" className="h-24 w-24 rounded-xl object-cover" />
+                    )}
+                    {imageErrors[flavorId] && (
+                      <p className="text-xs text-espresso/70">{imageErrors[flavorId]}</p>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex flex-wrap items-center gap-4">
                   {slices.left !== null && (
                     <div>
