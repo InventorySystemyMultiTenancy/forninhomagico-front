@@ -15,6 +15,7 @@ import {
   getOrders,
   getReadyOrders,
   markOrderReady,
+  pickupOrder,
 } from './api/backend'
 
 const navItems = [
@@ -305,7 +306,7 @@ function DashboardPage({ orders, loading, error }) {
         </div>
         <div className="mt-6">
           <h1 className="text-balance text-4xl font-display uppercase tracking-[0.12em] text-espresso sm:text-5xl">
-            Forninho Magico da Ana
+            Forninho Mágico da Ana
           </h1>
           <p className="mt-4 max-w-xl text-base text-espresso/70">
             Dashboard para vendas, estoque de fatias e controle de lucro.
@@ -552,6 +553,7 @@ function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
 function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyOrders }) {
   const [items, setItems] = useState([{ id: Date.now(), flavorId: '', qty: 1 }])
   const [paymentMethod, setPaymentMethod] = useState('point')
+  const [customerName, setCustomerName] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [submitFeedback, setSubmitFeedback] = useState(null)
 
@@ -598,11 +600,13 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
       setSubmitFeedback(null)
       // Backend cria um pedido por item — criar em sequencia
       const createdOrders = []
+      const trimmedName = customerName.trim() || undefined
       for (const item of validItems) {
         const order = await createOrder({
           flavorId: item.flavorId,
           qty: Number(item.qty),
           paymentMethod,
+          customerName: trimmedName,
         })
         createdOrders.push(order)
       }
@@ -626,6 +630,7 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
         setSubmitFeedback({ type: 'success', message: `${count > 1 ? `${count} pedidos criados` : 'Pedido criado'} com sucesso!` })
       }
       setItems([{ id: Date.now(), flavorId: '', qty: 1 }])
+      setCustomerName('')
       await reloadOrders()
       await reloadReadyOrders()
     } catch (err) {
@@ -755,6 +760,15 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
             ))}
           </div>
           <label className="field">
+            <span>Nome do cliente (opcional)</span>
+            <input
+              type="text"
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+              placeholder="Nome do cliente (opcional)"
+            />
+          </label>
+          <label className="field">
             <span>Forma de pagamento</span>
             <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
               <option value="point">Maquininha Point</option>
@@ -817,6 +831,9 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
                     <p className="text-xs uppercase tracking-[0.2em] text-espresso/50">
                       Pedido #{orderId ?? 'Sem ID'}
                     </p>
+                    {order?.customerName && (
+                      <p className="text-sm font-medium text-espresso">{order.customerName}</p>
+                    )}
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="text-sm text-espresso/70">
                         Status: {status || 'Sem status'}
@@ -873,6 +890,7 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
 function KitchenPage({ orders, loading, error, reloadOrders }) {
   const [markingId, setMarkingId] = useState(null)
   const [markFeedback, setMarkFeedback] = useState({})
+  const [pickupId, setPickupId] = useState(null)
 
   const handleMarkReady = async (orderId) => {
     try {
@@ -887,8 +905,21 @@ function KitchenPage({ orders, loading, error, reloadOrders }) {
     }
   }
 
+  const handlePickup = async (orderId) => {
+    try {
+      setPickupId(orderId)
+      await pickupOrder(orderId)
+      await reloadOrders()
+    } catch (err) {
+      setMarkFeedback((prev) => ({ ...prev, [orderId]: normalizeErrorMessage(err) }))
+    } finally {
+      setPickupId(null)
+    }
+  }
+
   const waitingOrders = orders.filter((o) => getOrderStatus(o) === 'aguardando pagamento')
   const inProgressOrders = orders.filter((o) => getOrderStatus(o) === 'em montagem')
+  const readyOrders = orders.filter((o) => getOrderStatus(o) === 'pronto')
 
   return (
     <section className="grid gap-8 animate-fade-in">
@@ -932,6 +963,9 @@ function KitchenPage({ orders, loading, error, reloadOrders }) {
                       Codigo: {paymentCode}
                     </p>
                   )}
+                  {order?.customerName && (
+                    <p className="text-sm text-espresso/70">{order.customerName}</p>
+                  )}
                   <p className="text-sm text-espresso/60">
                     Status: {status || 'Sem status'}
                   </p>
@@ -957,6 +991,54 @@ function KitchenPage({ orders, loading, error, reloadOrders }) {
           })}
         </div>
 
+        {!loading && readyOrders.length > 0 && (
+          <>
+            <div className="divider mt-6" />
+            <p className="mt-4 text-xs uppercase tracking-[0.2em] text-espresso/50">
+              Prontos para retirada ({readyOrders.length})
+            </p>
+            <div className="mt-3 space-y-3">
+              {readyOrders.map((order) => {
+                const orderId = getOrderId(order)
+                const paymentCode = getPaymentCode(order)
+                const total = getOrderTotal(order)
+                const feedback = markFeedback[orderId]
+                return (
+                  <div key={orderId ?? JSON.stringify(order)} className="soft-card">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.2em] text-espresso/50">
+                        Pedido #{orderId ?? 'Sem ID'}
+                      </p>
+                      {paymentCode && (
+                        <p className="text-sm font-semibold text-espresso">Codigo: {paymentCode}</p>
+                      )}
+                      {order?.customerName && (
+                        <p className="text-sm text-espresso/70">{order.customerName}</p>
+                      )}
+                      {feedback && (
+                        <p className="text-xs text-espresso/60 mt-1">{feedback}</p>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <p className="text-base font-semibold text-espresso">
+                        {formatCurrency(total)}
+                      </p>
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={() => handlePickup(orderId)}
+                        disabled={pickupId === orderId}
+                      >
+                        {pickupId === orderId ? 'Confirmando...' : '\u2713 Retirado'}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )}
+
         {!loading && waitingOrders.length > 0 && (
           <>
             <div className="divider mt-6" />
@@ -974,6 +1056,9 @@ function KitchenPage({ orders, loading, error, reloadOrders }) {
                       <p className="text-xs uppercase tracking-[0.2em] text-espresso/50">
                         Pedido #{orderId ?? 'Sem ID'}
                       </p>
+                      {order?.customerName && (
+                        <p className="text-sm text-espresso/70">{order.customerName}</p>
+                      )}
                       <p className="text-sm text-espresso/60">
                         Status: {status || 'Sem status'}
                       </p>
@@ -996,6 +1081,7 @@ function TrackingPage({ readyOrders, loading, error }) {
   const visibleReadyOrders = useMemo(
     () =>
       readyOrders
+        .filter((order) => getOrderStatus(order) === 'pronto')
         .map((order) => ({ order, code: getPaymentCode(order) }))
         .filter((item) => item.code),
     [readyOrders],
@@ -1026,6 +1112,9 @@ function TrackingPage({ readyOrders, loading, error }) {
                 <p className="ready-code-num">{code}</p>
                 {flavorName && (
                   <p className="ready-code-flavor">{flavorName}</p>
+                )}
+                {order?.customerName && (
+                  <p className="ready-code-customer">{order.customerName}</p>
                 )}
               </div>
             )
@@ -1233,10 +1322,10 @@ function AppLayout() {
         <aside className="sidebar card lg:w-64">
           <div className="flex flex-col gap-2">
             <p className="text-xs uppercase tracking-[0.4em] text-espresso/60">
-              Navegacao
+              Navegação
             </p>
             <h2 className="text-xl font-display uppercase tracking-[0.12em] text-espresso">
-              Forninho Magico
+              Forninho Mágico
             </h2>
           </div>
           <nav className="mt-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-1">

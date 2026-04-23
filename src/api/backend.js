@@ -83,10 +83,12 @@ export async function addSlices(flavorId, quantity) {
 }
 
 // Backend aceita um item por pedido — cria um pedido por item
-export async function createOrder({ flavorId, qty, paymentMethod }) {
+export async function createOrder({ flavorId, qty, paymentMethod, customerName }) {
+  const body = { flavorId: Number(flavorId), qty: Number(qty), paymentMethod }
+  if (customerName) body.customerName = customerName
   return requestJson('/api/orders', {
     method: 'POST',
-    body: JSON.stringify({ flavorId: Number(flavorId), qty: Number(qty), paymentMethod }),
+    body: JSON.stringify(body),
   })
 }
 
@@ -106,6 +108,10 @@ export async function confirmOrderCash(orderId) {
 
 export async function cancelOrder(orderId) {
   return requestJson(`/api/orders/${orderId}`, { method: 'DELETE' })
+}
+
+export async function pickupOrder(orderId) {
+  return requestJson(`/api/orders/${orderId}/pickup`, { method: 'PATCH' })
 }
 
 export async function getFinancials() {
