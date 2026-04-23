@@ -14,6 +14,7 @@ import {
   getFinancials,
   getOrders,
   getReadyOrders,
+  getStats,
   markOrderReady,
   pickupOrder,
 } from './api/backend'
@@ -253,6 +254,28 @@ function useFinancials() {
   return { data, loading, error, reload: load }
 }
 
+function useStats() {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true)
+      setError('')
+      const result = await getStats()
+      setData(result)
+    } catch (err) {
+      setError(normalizeErrorMessage(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+  return { data, loading, error, reload: load }
+}
+
 function useCosts() {
   const [costs, setCosts] = useState([])
   const [loading, setLoading] = useState(true)
@@ -276,26 +299,7 @@ function useCosts() {
   return { costs, loading, error, reload: load }
 }
 
-function DashboardPage({ orders, loading, error }) {
-  const stats = useMemo(() => {
-    const totalOrders = orders.length
-    const paidOrders = orders.filter(isOrderPaid).length
-    const pendingOrders = totalOrders - paidOrders
-    const totals = orders
-      .map((order) => parseCurrency(getOrderTotal(order)))
-      .filter((value) => typeof value === 'number')
-    const revenue = totals.length
-      ? totals.reduce((sum, value) => sum + value, 0)
-      : null
-
-    return {
-      totalOrders,
-      paidOrders,
-      pendingOrders,
-      revenue,
-    }
-  }, [orders])
-
+function DashboardPage({ stats, loadingStats, errorStats, flavors, loadingFlavors }) {
   return (
     <section className="flex flex-col gap-8 animate-fade-in">
       <header className="card">
@@ -314,32 +318,73 @@ function DashboardPage({ orders, loading, error }) {
           </p>
         </div>
       </header>
-      {error && (
+      {errorStats && (
         <div className="card">
-          <p className="text-sm text-espresso/70">{error}</p>
+          <p className="text-sm text-espresso/70">{errorStats}</p>
         </div>
       )}
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="stat-card">
-          <p className="stat-label">Total em pedidos</p>
+          <p className="stat-label">Total de pedidos</p>
           <p className="stat-value">
-            {loading ? 'Carregando...' : formatCurrency(stats.revenue)}
+            {loadingStats ? 'Carregando...' : (stats?.totalOrders ?? '—')}
           </p>
-          <p className="stat-sub">Pedidos carregados: {stats.totalOrders}</p>
+          <p className="stat-sub">Exclui cancelados</p>
         </div>
         <div className="stat-card">
           <p className="stat-label">Pedidos pagos</p>
           <p className="stat-value">
-            {loading ? 'Carregando...' : stats.paidOrders}
+            {loadingStats ? 'Carregando...' : (stats?.paidOrders ?? '—')}
           </p>
           <p className="stat-sub">Status confirmado no backend</p>
         </div>
         <div className="stat-card">
-          <p className="stat-label">Pedidos pendentes</p>
+          <p className="stat-label">Aguardando pagamento</p>
           <p className="stat-value">
-            {loading ? 'Carregando...' : stats.pendingOrders}
+            {loadingStats ? 'Carregando...' : (stats?.pendingOrders ?? '—')}
           </p>
-          <p className="stat-sub">Aguardando pagamento</p>
+          <p className="stat-sub">
+            {stats?.cancelledOrders != null ? `${stats.cancelledOrders} cancelado(s)` : 'Pagamento pendente'}
+          </p>
+        </div>
+      </div>
+      <div className="card">
+        <h2 className="section-title">Sabores disponíveis</h2>
+        <p className="section-sub">Fatias disponíveis por sabor.</p>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {loadingFlavors && <p className="text-sm text-espresso/70">Carregando...</p>}
+          {!loadingFlavors && flavors.length === 0 && (
+            <p className="text-sm text-espresso/70">Nenhum sabor cadastrado.</p>
+          )}
+          {flavors.map((flavor) => {
+            const flavorId = getFlavorId(flavor)
+            const name = getFlavorName(flavor)
+            const price = getFlavorPrice(flavor)
+            const slices = getFlavorSlices(flavor)
+            const active = isFlavorActive(flavor)
+            const imageUrl = flavor?.imageUrl ?? null
+            return (
+              <div key={flavorId ?? name} className="overflow-hidden rounded-2xl border border-[rgba(123,78,43,0.15)] bg-white/60">
+                <div className="flex h-36 items-center justify-center overflow-hidden bg-[rgba(229,200,169,0.25)]">
+                  {imageUrl ? (
+                    <img src={imageUrl} alt={name} className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="text-5xl">🎂</span>
+                  )}
+                </div>
+                <div className="p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-espresso">{name}</p>
+                    {!active && <span className="pill pill-small pill-outline">Pausado</span>}
+                  </div>
+                  <p className="mt-1 text-xs text-espresso/60">
+                    {price !== null ? formatCurrency(price) + ' por fatia' : '—'}
+                    {slices.left !== null ? ` · ${slices.left} disponíveis` : ''}
+                  </p>
+                </div>
+              </div>
+            )
+          })}
         </div>
       </div>
     </section>
@@ -348,7 +393,7 @@ function DashboardPage({ orders, loading, error }) {
 
 function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
   const [showNewFlavor, setShowNewFlavor] = useState(false)
-  const [newFlavor, setNewFlavor] = useState({ name: '', price: '', slicesTotal: '' })
+  const [newFlavor, setNewFlavor] = useState({ name: '', price: '', slicesTotal: '', imageUrl: '' })
   const [savingFlavor, setSavingFlavor] = useState(false)
   const [flavorFormError, setFlavorFormError] = useState('')
 
@@ -372,8 +417,9 @@ function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
         name: newFlavor.name.trim(),
         price,
         slicesTotal: Number(newFlavor.slicesTotal) || 0,
+        imageUrl: newFlavor.imageUrl.trim() || undefined,
       })
-      setNewFlavor({ name: '', price: '', slicesTotal: '' })
+      setNewFlavor({ name: '', price: '', slicesTotal: '', imageUrl: '' })
       setShowNewFlavor(false)
       await reloadFlavors()
     } catch (err) {
@@ -451,6 +497,15 @@ function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
                 />
               </label>
             </div>
+            <label className="field">
+              <span>URL da imagem (opcional)</span>
+              <input
+                type="url"
+                value={newFlavor.imageUrl}
+                onChange={(e) => setNewFlavor((prev) => ({ ...prev, imageUrl: e.target.value }))}
+                placeholder="https://res.cloudinary.com/.../bolo.jpg"
+              />
+            </label>
             {flavorFormError && (
               <p className="text-xs text-espresso/70">{flavorFormError}</p>
             )}
@@ -1293,6 +1348,15 @@ function ReportPage({ financials, costsData, loadingFinancials, loadingCosts, er
             </div>
             <span className="pill pill-small pill-outline">Ingredientes, embalagens...</span>
           </div>
+          <div className="soft-card">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-espresso/50">Total de custos</p>
+              <p className="text-xl font-semibold text-espresso">
+                {loadingFinancials ? 'Carregando...' : formatCurrency(financials?.totalCosts ?? null)}
+              </p>
+            </div>
+            <span className="pill pill-small pill-outline">Operacional + Produto</span>
+          </div>
           <div className="divider" />
           <div className="soft-card">
             <div>
@@ -1313,6 +1377,7 @@ function AppLayout() {
   const ordersState = useOrdersData()
   const readyOrdersState = useReadyOrders()
   const flavorsState = useFlavors()
+  const statsState = useStats()
   const financialsState = useFinancials()
   const costsState = useCosts()
 
@@ -1349,9 +1414,11 @@ function AppLayout() {
               path="/"
               element={
                 <DashboardPage
-                  orders={ordersState.orders}
-                  loading={ordersState.loading}
-                  error={ordersState.error}
+                  stats={statsState.data}
+                  loadingStats={statsState.loading}
+                  errorStats={statsState.error}
+                  flavors={flavorsState.flavors}
+                  loadingFlavors={flavorsState.loading}
                 />
               }
             />

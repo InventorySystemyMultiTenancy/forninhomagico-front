@@ -40,6 +40,10 @@ async function requestJson(path, options = {}) {
   return readResponseBody(response)
 }
 
+export async function getStats() {
+  return requestJson('/api/stats', { method: 'GET' })
+}
+
 export async function getOrders() {
   return requestJson('/api/orders', { method: 'GET' })
 }
@@ -63,15 +67,17 @@ export async function getFlavors() {
   return requestJson('/api/flavors', { method: 'GET' })
 }
 
-export async function addFlavor({ name, price, slicesTotal }) {
+export async function addFlavor({ name, price, slicesTotal, imageUrl }) {
+  const body = {
+    name,
+    priceCents: Math.round(Number(price) * 100),
+    slicesTotal: Number(slicesTotal) || 0,
+    slicesAvailable: Number(slicesTotal) || 0,
+  }
+  if (imageUrl) body.imageUrl = imageUrl
   return requestJson('/api/flavors', {
     method: 'POST',
-    body: JSON.stringify({
-      name,
-      priceCents: Math.round(Number(price) * 100),
-      slicesTotal: Number(slicesTotal) || 0,
-      slicesAvailable: Number(slicesTotal) || 0,
-    }),
+    body: JSON.stringify(body),
   })
 }
 
