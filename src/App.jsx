@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom'
 import {
+  addCost,
   addFlavor,
   addSlices,
   cancelOrder,
   confirmOrderCash,
   createOrder,
   createPosIntent,
+  deleteCost,
+  getCosts,
   getFlavors,
+  getFinancials,
   getOrders,
   getReadyOrders,
   markOrderReady,
@@ -224,6 +228,51 @@ function useFlavors() {
   }, [loadFlavors])
 
   return { flavors, loading, error, reload: loadFlavors }
+}
+
+function useFinancials() {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true)
+      setError('')
+      const result = await getFinancials()
+      setData(result)
+    } catch (err) {
+      setError(normalizeErrorMessage(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+  return { data, loading, error, reload: load }
+}
+
+function useCosts() {
+  const [costs, setCosts] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true)
+      setError('')
+      const result = await getCosts()
+      setCosts(Array.isArray(result) ? result : [])
+    } catch (err) {
+      setError(normalizeErrorMessage(err))
+      setCosts([])
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+  return { costs, loading, error, reload: load }
 }
 
 function DashboardPage({ orders, loading, error }) {
@@ -987,102 +1036,183 @@ function TrackingPage({ readyOrders, loading, error }) {
   )
 }
 
-function ReportPage({ orders, loading, error }) {
-  const totals = useMemo(() => {
-    const values = orders
-      .map((order) => parseCurrency(getOrderTotal(order)))
-      .filter((value) => typeof value === 'number')
-    const revenue = values.length
-      ? values.reduce((sum, value) => sum + value, 0)
-      : null
-    const paidOrders = orders.filter(isOrderPaid).length
-    return { revenue, paidOrders }
-  }, [orders])
+function ReportPage({ financials, costsData, loadingFinancials, loadingCosts, errorFinancials, errorCosts, reloadFinancials, reloadCosts }) {
+  const [newCost, setNewCost] = useState({ label: '', amount: '', cadence: 'monthly', category: 'operational' })
+  const [addingCost, setAddingCost] = useState(false)
+  const [costFormError, setCostFormError] = useState('')
+  const [deletingId, setDeletingId] = useState(null)
+
+  const operationalCosts = costsData.filter((c) => c.category === 'operational')
+  const productCosts = costsData.filter((c) => c.category === 'product')
+
+  const handleAddCost = async (e) => {
+    e.preventDefault()
+    const amountCents = Math.round(parseCurrency(newCost.amount) * 100)
+    if (!newCost.label.trim() || !amountCents || amountCents <= 0) {
+      setCostFormError('Informe nome e valor valido (ex: 12,50)')
+      return
+    }
+    try {
+      setAddingCost(true)
+      setCostFormError('')
+      await addCost({ label: newCost.label.trim(), amountCents, cadence: newCost.cadence, category: newCost.category })
+      setNewCost({ label: '', amount: '', cadence: 'monthly', category: 'operational' })
+      await Promise.all([reloadCosts(), reloadFinancials()])
+    } catch (err) {
+      setCostFormError(normalizeErrorMessage(err))
+    } finally {
+      setAddingCost(false)
+    }
+  }
+
+  const handleDeleteCost = async (costId) => {
+    if (!window.confirm('Remover este custo?')) return
+    try {
+      setDeletingId(costId)
+      await deleteCost(costId)
+      await Promise.all([reloadCosts(), reloadFinancials()])
+    } catch (err) {
+      // silencioso — erro raro
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  const CostSection = ({ title, items, loadingSection }) => (
+    <div className="mt-4 space-y-2">
+      <p className="text-xs uppercase tracking-[0.2em] text-espresso/50">{title}</p>
+      {loadingSection && <p className="text-sm text-espresso/70">Carregando...</p>}
+      {!loadingSection && items.length === 0 && (
+        <p className="text-sm text-espresso/60">Nenhum custo cadastrado.</p>
+      )}
+      {items.map((cost) => (
+        <div key={cost.id} className="soft-card">
+          <div>
+            <p className="text-sm font-semibold text-espresso">{cost.label}</p>
+            <p className="text-xs text-espresso/60">
+              {cost.cadence === 'monthly' ? 'Mensal' : 'Avulso'}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <p className="text-base font-semibold text-espresso">
+              {formatCurrency(cost.amountCents)}
+            </p>
+            <button
+              className="ghost-button small"
+              type="button"
+              onClick={() => handleDeleteCost(cost.id)}
+              disabled={deletingId === cost.id}
+            >
+              {deletingId === cost.id ? '...' : 'Remover'}
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
 
   return (
     <section className="grid gap-8 lg:grid-cols-2 animate-fade-in">
+      {/* Coluna esquerda — custos */}
       <div className="card">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="section-title">Controle de custos</h2>
-            <p className="section-sub">
-              Dados retornados pelo backend de pedidos.
-            </p>
-          </div>
-        </div>
-        {error && (
-          <p className="mt-6 text-sm text-espresso/70">{error}</p>
-        )}
-        <div className="mt-6 space-y-3">
-          {loading && <p className="text-sm text-espresso/70">Carregando...</p>}
-          {!loading && orders.length === 0 && (
-            <p className="text-sm text-espresso/70">
-              Nenhum pedido retornado pelo backend.
-            </p>
-          )}
-          {orders.map((order) => {
-            const orderId = getOrderId(order)
-            const status = getOrderStatus(order)
-            const total = getOrderTotal(order)
+        <h2 className="section-title">Controle de custos</h2>
+        <p className="section-sub">Cadastre custos operacionais e de produto.</p>
 
-            return (
-              <div key={orderId ?? JSON.stringify(order)} className="soft-card">
-                <div>
-                  <p className="text-sm font-semibold text-espresso">
-                    Pedido #{orderId ?? 'Sem ID'}
-                  </p>
-                  <p className="text-xs text-espresso/60">
-                    Status: {status || 'Sem status'}
-                  </p>
-                </div>
-                <p className="text-base font-semibold text-espresso">
-                  {formatCurrency(total)}
-                </p>
-              </div>
-            )
-          })}
-        </div>
+        {errorCosts && <p className="mt-4 text-sm text-espresso/70">{errorCosts}</p>}
+
+        <CostSection title="Custos Operacionais" items={operationalCosts} loadingSection={loadingCosts} />
+        <CostSection title="Custos de Produto" items={productCosts} loadingSection={loadingCosts} />
+
+        <div className="divider mt-6" />
+        <form onSubmit={handleAddCost} className="mt-4 grid gap-3">
+          <p className="text-xs uppercase tracking-[0.2em] text-espresso/50">Adicionar custo</p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="field">
+              <span>Nome</span>
+              <input
+                type="text"
+                required
+                placeholder="Ex: Aluguel"
+                value={newCost.label}
+                onChange={(e) => setNewCost((p) => ({ ...p, label: e.target.value }))}
+              />
+            </label>
+            <label className="field">
+              <span>Valor (R$)</span>
+              <input
+                type="text"
+                required
+                placeholder="Ex: 150,00"
+                value={newCost.amount}
+                onChange={(e) => setNewCost((p) => ({ ...p, amount: e.target.value }))}
+              />
+            </label>
+            <label className="field">
+              <span>Categoria</span>
+              <select value={newCost.category} onChange={(e) => setNewCost((p) => ({ ...p, category: e.target.value }))}>
+                <option value="operational">Operacional (aluguel, energia...)</option>
+                <option value="product">Produto (ingredientes, embalagens...)</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Recorrencia</span>
+              <select value={newCost.cadence} onChange={(e) => setNewCost((p) => ({ ...p, cadence: e.target.value }))}>
+                <option value="monthly">Mensal</option>
+                <option value="once">Avulso</option>
+              </select>
+            </label>
+          </div>
+          {costFormError && <p className="text-xs text-espresso/70">{costFormError}</p>}
+          <div className="flex justify-end">
+            <button className="primary-button" type="submit" disabled={addingCost}>
+              {addingCost ? 'Salvando...' : 'Adicionar custo'}
+            </button>
+          </div>
+        </form>
       </div>
+
+      {/* Coluna direita — resumo financeiro */}
       <div className="card">
         <h2 className="section-title">Resumo financeiro</h2>
-        <p className="section-sub">
-          Resultado do mes com base nas vendas e custos ativos.
-        </p>
-        <div className="mt-6 space-y-4">
+        <p className="section-sub">Resultado com base nas vendas confirmadas e custos cadastrados.</p>
+        {errorFinancials && <p className="mt-4 text-sm text-espresso/70">{errorFinancials}</p>}
+        <div className="mt-6 space-y-3">
           <div className="soft-card">
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-espresso/50">
-                Lucro bruto
-              </p>
+              <p className="text-xs uppercase tracking-[0.2em] text-espresso/50">Receita bruta</p>
               <p className="text-xl font-semibold text-espresso">
-                {loading ? 'Carregando...' : formatCurrency(totals.revenue)}
+                {loadingFinancials ? 'Carregando...' : formatCurrency(financials?.gross ?? null)}
               </p>
             </div>
-            <span className="pill pill-outline">
-              {loading ? '...' : `${orders.length} pedidos`}
-            </span>
+            <span className="pill pill-outline">Vendas confirmadas</span>
           </div>
           <div className="soft-card">
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-espresso/50">
-                Pedidos pagos
-              </p>
+              <p className="text-xs uppercase tracking-[0.2em] text-espresso/50">Custos operacionais</p>
               <p className="text-xl font-semibold text-espresso">
-                {loading ? 'Carregando...' : totals.paidOrders}
+                {loadingFinancials ? 'Carregando...' : formatCurrency(financials?.operationalCosts ?? null)}
               </p>
             </div>
-            <span className="pill pill-small">Status confirmado</span>
+            <span className="pill pill-small pill-outline">Aluguel, energia...</span>
           </div>
           <div className="soft-card">
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-espresso/50">
-                Pedidos pendentes
-              </p>
-              <p className="text-2xl font-semibold text-espresso">
-                {loading ? 'Carregando...' : orders.length - totals.paidOrders}
+              <p className="text-xs uppercase tracking-[0.2em] text-espresso/50">Custos de produto</p>
+              <p className="text-xl font-semibold text-espresso">
+                {loadingFinancials ? 'Carregando...' : formatCurrency(financials?.productCosts ?? null)}
               </p>
             </div>
-            <span className="pill pill-dark">Aguardando pagamento</span>
+            <span className="pill pill-small pill-outline">Ingredientes, embalagens...</span>
+          </div>
+          <div className="divider" />
+          <div className="soft-card">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-espresso/50">Lucro liquido</p>
+              <p className="text-2xl font-bold text-espresso">
+                {loadingFinancials ? 'Carregando...' : formatCurrency(financials?.net ?? null)}
+              </p>
+            </div>
+            <span className="pill pill-dark">Resultado final</span>
           </div>
         </div>
       </div>
@@ -1094,6 +1224,8 @@ function AppLayout() {
   const ordersState = useOrdersData()
   const readyOrdersState = useReadyOrders()
   const flavorsState = useFlavors()
+  const financialsState = useFinancials()
+  const costsState = useCosts()
 
   return (
     <div className="min-h-screen bg-app text-slate-900">
@@ -1183,9 +1315,14 @@ function AppLayout() {
               path="/relatorio"
               element={
                 <ReportPage
-                  orders={ordersState.orders}
-                  loading={ordersState.loading}
-                  error={ordersState.error}
+                  financials={financialsState.data}
+                  costsData={costsState.costs}
+                  loadingFinancials={financialsState.loading}
+                  loadingCosts={costsState.loading}
+                  errorFinancials={financialsState.error}
+                  errorCosts={costsState.error}
+                  reloadFinancials={financialsState.reload}
+                  reloadCosts={costsState.reload}
                 />
               }
             />

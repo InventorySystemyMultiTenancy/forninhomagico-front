@@ -107,3 +107,22 @@ export async function confirmOrderCash(orderId) {
 export async function cancelOrder(orderId) {
   return requestJson(`/api/orders/${orderId}`, { method: 'DELETE' })
 }
+
+export async function getFinancials() {
+  return requestJson('/api/financials', { method: 'GET' })
+}
+
+export async function getCosts() {
+  return requestJson('/api/costs', { method: 'GET' })
+}
+
+export async function addCost({ label, amountCents, cadence, category }) {
+  return requestJson('/api/costs', {
+    method: 'POST',
+    body: JSON.stringify({ label, amountCents, cadence, category }),
+  })
+}
+
+export async function deleteCost(costId) {
+  return requestJson(`/api/costs/${costId}`, { method: 'DELETE' })
+}
