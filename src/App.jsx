@@ -34,7 +34,6 @@ const navItems = [
 function getPaymentMethodLabel(order) {
   const method = order?.paymentMethod ?? order?.payment_method ?? ''
   if (method === 'point' || method === 'card') return '\u{1F4B3} Point'
-  if (method === 'pix') return '\u{1F4F1} Pix'
   if (method === 'dinheiro' || method === 'cash') return '\u{1F4B5} Dinheiro'
   return method || ''
 }
@@ -794,7 +793,7 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
         })
         createdOrders.push(order)
       }
-      if (paymentMethod === 'point' || paymentMethod === 'pix' || paymentMethod === 'card') {
+      if (paymentMethod === 'point' || paymentMethod === 'card') {
         for (const order of createdOrders) {
           const orderId = getOrderId(order)
           if (orderId) {
@@ -1006,7 +1005,6 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
             <span>Forma de pagamento</span>
             <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
               <option value="point">Maquininha Point</option>
-              <option value="pix">Pix</option>
               <option value="dinheiro">Dinheiro</option>
             </select>
           </label>
