@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom'
 import {
   addCost,
@@ -157,6 +157,31 @@ function normalizeErrorMessage(error) {
   }
   return error.message || 'Erro ao comunicar com o backend'
 }
+
+const PIX_STORAGE_KEY = 'forninho_pix_state_v1'
+
+const PixQrPanel = memo(function PixQrPanel({ pixState, onCopy, copied }) {
+  if (!pixState?.qrCodeBase64) return null
+
+  return (
+    <div className="mt-2 rounded-xl border border-[rgba(123,78,43,0.2)] bg-white/60 p-3">
+      <p className="text-xs uppercase tracking-[0.15em] text-espresso/50">Pagamento PIX</p>
+      <img
+        src={`data:image/png;base64,${pixState.qrCodeBase64}`}
+        alt="QR Code PIX"
+        className="mt-2 h-40 w-40 rounded-lg border border-[rgba(123,78,43,0.15)] bg-white p-1"
+      />
+      <div className="mt-2 flex items-center gap-2">
+        <button className="ghost-button small" type="button" onClick={onCopy}>
+          {copied ? '✓ Copiado!' : 'Copiar codigo PIX'}
+        </button>
+        <p className="text-xs text-espresso/60">
+          Expira em ~{Math.max(1, Math.floor((pixState.expiresIn ?? 1800) / 60))} min
+        </p>
+      </div>
+    </div>
+  )
+})
 
 function useOrdersData() {
   const [orders, setOrders] = useState([])
@@ -746,36 +771,60 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
   const [submitFeedback, setSubmitFeedback] = useState(null)
 
   const [sendingOrderId, setSendingOrderId] = useState(null)
-  const [pollingOrderId, setPollingOrderId] = useState(null)
-  const [pollingIntervals, setPollingIntervals] = useState({})
-  const [pixStateByOrder, setPixStateByOrder] = useState({})
+  const pollingIntervalsRef = useRef({})
+  const [pixStateByOrder, setPixStateByOrder] = useState(() => {
+    try {
+      const raw = localStorage.getItem(PIX_STORAGE_KEY)
+      if (!raw) return {}
+      const parsed = JSON.parse(raw)
+      return parsed && typeof parsed === 'object' ? parsed : {}
+    } catch {
+      return {}
+    }
+  })
   const [copyingOrderId, setCopyingOrderId] = useState(null)
   const [cancelingOrderId, setCancelingOrderId] = useState(null)
   const [actionFeedback, setActionFeedback] = useState({})
 
   useEffect(() => {
     return () => {
-      Object.values(pollingIntervals).forEach((intervalId) => clearInterval(intervalId))
+      Object.values(pollingIntervalsRef.current).forEach((intervalId) => clearInterval(intervalId))
+      pollingIntervalsRef.current = {}
     }
-  }, [pollingIntervals])
-
-  const pendingPixOrders = useMemo(
-    () =>
-      orders.filter(
-        (order) =>
-          isPaymentMethodPix(order) && getOrderStatus(order) === 'aguardando pagamento',
-      ),
-    [orders],
-  )
+  }, [])
 
   useEffect(() => {
-    if (pendingPixOrders.length === 0) return undefined
+    localStorage.setItem(PIX_STORAGE_KEY, JSON.stringify(pixStateByOrder))
+  }, [pixStateByOrder])
+
+  const activePixOrderIds = useMemo(() => Object.keys(pixStateByOrder), [pixStateByOrder])
+
+  useEffect(() => {
+    if (orders.length === 0) return
+    setPixStateByOrder((prev) => {
+      const next = { ...prev }
+      let changed = false
+      for (const order of orders) {
+        const orderId = getOrderId(order)
+        if (!orderId || !next[orderId]) continue
+        const status = getOrderStatus(order)
+        if (status && status !== 'aguardando pagamento') {
+          delete next[orderId]
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [orders])
+
+  useEffect(() => {
+    if (activePixOrderIds.length === 0) return undefined
     const intervalId = setInterval(async () => {
       await reloadOrders()
       await reloadReadyOrders()
     }, 3000)
     return () => clearInterval(intervalId)
-  }, [pendingPixOrders.length, reloadOrders, reloadReadyOrders])
+  }, [activePixOrderIds.length, reloadOrders, reloadReadyOrders])
 
   const addItem = () => {
     setItems((prev) => [...prev, { id: Date.now(), flavorId: '', qty: 1 }])
@@ -892,7 +941,6 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
         ...prev,
         [orderId]: { type: 'info', message: 'Confirme o pagamento na máquina...' },
       }))
-      setPollingOrderId(orderId)
       pollPaymentStatus(orderId)
       await reloadOrders()
       await reloadReadyOrders()
@@ -961,11 +1009,7 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
 
       if (attempts > maxAttempts) {
         clearInterval(interval)
-        setPollingIntervals((prev) => {
-          const next = { ...prev }
-          delete next[orderId]
-          return next
-        })
+        delete pollingIntervalsRef.current[orderId]
         setActionFeedback((prev) => ({
           ...prev,
           [orderId]: { type: 'error', message: 'Timeout. Recarregue a página ou tente novamente.' },
@@ -977,16 +1021,11 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
         const data = await getPaymentIntentStatus(orderId)
         if (data.success && data.orderStatus === 'em montagem') {
           clearInterval(interval)
-          setPollingIntervals((prev) => {
-            const next = { ...prev }
-            delete next[orderId]
-            return next
-          })
+          delete pollingIntervalsRef.current[orderId]
           setActionFeedback((prev) => ({
             ...prev,
             [orderId]: { type: 'success', message: '✓ Pagamento confirmado! Preparando...' },
           }))
-          setPollingOrderId(null)
           await reloadOrders()
           await reloadReadyOrders()
         }
@@ -997,7 +1036,10 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
       }
     }, 2000) // a cada 2 segundos
 
-    setPollingIntervals((prev) => ({ ...prev, [orderId]: interval }))
+    if (pollingIntervalsRef.current[orderId]) {
+      clearInterval(pollingIntervalsRef.current[orderId])
+    }
+    pollingIntervalsRef.current[orderId] = interval
   }
 
   const handleConfirmCash = async (orderId) => {
@@ -1187,26 +1229,11 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
                       <p className="text-xs text-espresso/60">{feedback.message}</p>
                     )}
                     {isPaymentMethodPix(order) && pixState?.qrCodeBase64 && (
-                      <div className="mt-2 rounded-xl border border-[rgba(123,78,43,0.2)] bg-white/60 p-3">
-                        <p className="text-xs uppercase tracking-[0.15em] text-espresso/50">Pagamento PIX</p>
-                        <img
-                          src={`data:image/png;base64,${pixState.qrCodeBase64}`}
-                          alt="QR Code PIX"
-                          className="mt-2 h-40 w-40 rounded-lg border border-[rgba(123,78,43,0.15)] bg-white p-1"
-                        />
-                        <div className="mt-2 flex items-center gap-2">
-                          <button
-                            className="ghost-button small"
-                            type="button"
-                            onClick={() => handleCopyPixCode(orderId)}
-                          >
-                            {copyingOrderId === orderId ? '✓ Copiado!' : 'Copiar codigo PIX'}
-                          </button>
-                          <p className="text-xs text-espresso/60">
-                            Expira em ~{Math.max(1, Math.floor((pixState.expiresIn ?? 1800) / 60))} min
-                          </p>
-                        </div>
-                      </div>
+                      <PixQrPanel
+                        pixState={pixState}
+                        onCopy={() => handleCopyPixCode(orderId)}
+                        copied={copyingOrderId === orderId}
+                      />
                     )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
