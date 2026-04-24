@@ -73,10 +73,25 @@ function getOrderStatus(order) {
   )
 }
 
+function normalizeOrderStatus(order) {
+  return String(getOrderStatus(order)).toLowerCase().trim()
+}
+
+function isWaitingPaymentStatus(status) {
+  return (
+    status === 'aguardando pagamento' ||
+    status === 'pending' ||
+    status === 'created' ||
+    status === 'criado' ||
+    status === 'in_process' ||
+    status === 'em processamento'
+  )
+}
+
 function isOrderPaid(order) {
-  // Status 'aguardando pagamento' = nao pago; todo o resto (em montagem, pronto, etc) = pago
-  const status = String(getOrderStatus(order)).toLowerCase()
-  return status !== '' && status !== 'aguardando pagamento'
+  // Status de espera de pagamento (inclui pending) = nao pago; demais = pago
+  const status = normalizeOrderStatus(order)
+  return status !== '' && !isWaitingPaymentStatus(status)
 }
 
 // Backend retorna order.code diretamente como codigo de 3 digitos
@@ -197,9 +212,9 @@ function useOrdersData() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  const loadOrders = useCallback(async () => {
+  const loadOrders = useCallback(async (showLoading = true) => {
     try {
-      setLoading(true)
+      if (showLoading) setLoading(true)
       setError('')
       const data = await getOrders()
       const items = Array.isArray(data) ? data : data?.orders
@@ -855,7 +870,7 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
   // Auto-recuperação: usa a REF para checar estado atual (evita closure stale)
   useEffect(() => {
     const pixOrders = orders.filter(
-      (o) => isPaymentMethodPix(o) && getOrderStatus(o) === 'aguardando pagamento'
+      (o) => isPaymentMethodPix(o) && isWaitingPaymentStatus(normalizeOrderStatus(o))
     )
     for (const order of pixOrders) {
       const orderId = getOrderId(order)
@@ -883,8 +898,8 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
   useEffect(() => {
     if (activePixOrderIds.length === 0) return undefined
     const intervalId = setInterval(async () => {
-      await reloadOrders()
-      await reloadReadyOrders()
+      await reloadOrders(false)
+      await reloadReadyOrders(false)
     }, 3000)
     return () => clearInterval(intervalId)
   }, [activePixOrderIds.length, reloadOrders, reloadReadyOrders])
