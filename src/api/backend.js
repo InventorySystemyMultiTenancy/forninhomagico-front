@@ -70,6 +70,10 @@ export async function createPixPayment(orderId) {
   })
 }
 
+export async function getPixQrCode(orderId) {
+  return requestJson(`/api/payments/mercadopago/pix/qrcode/${orderId}`, { method: 'GET' })
+}
+
 export async function getPaymentIntentStatus(orderId) {
   return requestJson(`/api/payments/mercadopago/pos/intent-status/${orderId}`, { method: 'GET' })
 }

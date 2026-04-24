@@ -9,6 +9,7 @@ import {
   createOrder,
   createPixPayment,
   createPosIntent,
+  getPixQrCode,
   deleteCost,
   getCosts,
   getFlavors,
@@ -823,6 +824,31 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
     })
   }, [orders, PAID_STATUSES])
 
+  // Auto-recuperação: para pedidos PIX aguardando pagamento sem QR no estado, busca do backend
+  useEffect(() => {
+    const pixOrders = orders.filter(
+      (o) => isPaymentMethodPix(o) && getOrderStatus(o) === 'aguardando pagamento'
+    )
+    for (const order of pixOrders) {
+      const orderId = getOrderId(order)
+      if (!orderId || pixStateByOrder[orderId]) continue
+      getPixQrCode(orderId)
+        .then((data) => {
+          if (data?.success && !data?.paid && data?.qrCode) {
+            setPixStateByOrder((prev) => ({
+              ...prev,
+              [orderId]: {
+                qrCode: data.qrCode ?? '',
+                qrCodeBase64: data.qrCodeBase64 ?? '',
+                expiresIn: 1800,
+              },
+            }))
+          }
+        })
+        .catch(() => { /* silencioso — endpoint pode retornar erro se não há qr */ })
+    }
+  }, [orders]) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (activePixOrderIds.length === 0) return undefined
     const intervalId = setInterval(async () => {
@@ -1234,12 +1260,16 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
                     {feedback && (
                       <p className="text-xs text-espresso/60">{feedback.message}</p>
                     )}
-                    {isPaymentMethodPix(order) && pixState?.qrCodeBase64 && (
-                      <PixQrPanel
-                        pixState={pixState}
-                        onCopy={() => handleCopyPixCode(orderId)}
-                        copied={copyingOrderId === orderId}
-                      />
+                    {isPaymentMethodPix(order) && (
+                      pixState?.qrCodeBase64 ? (
+                        <PixQrPanel
+                          pixState={pixState}
+                          onCopy={() => handleCopyPixCode(orderId)}
+                          copied={copyingOrderId === orderId}
+                        />
+                      ) : (
+                        <p className="text-xs text-espresso/50 italic">QR Code aguardando geração...</p>
+                      )
                     )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -1262,7 +1292,7 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
                         onClick={() => handleGeneratePix(orderId)}
                         disabled={!orderId || sendingOrderId === orderId}
                       >
-                        {sendingOrderId === orderId ? 'Gerando...' : 'Gerar QR PIX'}
+                        {sendingOrderId === orderId ? 'Gerando...' : (pixState?.qrCodeBase64 ? '🔄 Atualizar QR' : 'Gerar QR PIX')}
                       </button>
                     ) : (
                       <button
