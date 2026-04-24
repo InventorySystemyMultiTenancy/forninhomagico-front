@@ -7,6 +7,7 @@ import {
   cancelOrder,
   confirmOrderCash,
   createOrder,
+  createPixPayment,
   createPosIntent,
   deleteCost,
   getCosts,
@@ -34,6 +35,7 @@ const navItems = [
 function getPaymentMethodLabel(order) {
   const method = order?.paymentMethod ?? order?.payment_method ?? ''
   if (method === 'point' || method === 'card') return '\u{1F4B3} Point'
+  if (method === 'pix') return '\u{1F4F1} Pix'
   if (method === 'dinheiro' || method === 'cash') return '\u{1F4B5} Dinheiro'
   return method || ''
 }
@@ -41,6 +43,11 @@ function getPaymentMethodLabel(order) {
 function isPaymentMethodCash(order) {
   const method = order?.paymentMethod ?? order?.payment_method ?? ''
   return method === 'dinheiro' || method === 'cash'
+}
+
+function isPaymentMethodPix(order) {
+  const method = order?.paymentMethod ?? order?.payment_method ?? ''
+  return method === 'pix'
 }
 
 function getOrderId(order) {
@@ -741,8 +748,34 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
   const [sendingOrderId, setSendingOrderId] = useState(null)
   const [pollingOrderId, setPollingOrderId] = useState(null)
   const [pollingIntervals, setPollingIntervals] = useState({})
+  const [pixStateByOrder, setPixStateByOrder] = useState({})
+  const [copyingOrderId, setCopyingOrderId] = useState(null)
   const [cancelingOrderId, setCancelingOrderId] = useState(null)
   const [actionFeedback, setActionFeedback] = useState({})
+
+  useEffect(() => {
+    return () => {
+      Object.values(pollingIntervals).forEach((intervalId) => clearInterval(intervalId))
+    }
+  }, [pollingIntervals])
+
+  const pendingPixOrders = useMemo(
+    () =>
+      orders.filter(
+        (order) =>
+          isPaymentMethodPix(order) && getOrderStatus(order) === 'aguardando pagamento',
+      ),
+    [orders],
+  )
+
+  useEffect(() => {
+    if (pendingPixOrders.length === 0) return undefined
+    const intervalId = setInterval(async () => {
+      await reloadOrders()
+      await reloadReadyOrders()
+    }, 3000)
+    return () => clearInterval(intervalId)
+  }, [pendingPixOrders.length, reloadOrders, reloadReadyOrders])
 
   const addItem = () => {
     setItems((prev) => [...prev, { id: Date.now(), flavorId: '', qty: 1 }])
@@ -793,6 +826,28 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
         })
         createdOrders.push(order)
       }
+      if (paymentMethod === 'pix') {
+        const generated = {}
+        for (const order of createdOrders) {
+          const orderId = getOrderId(order)
+          if (!orderId) continue
+          setActionFeedback((prev) => ({
+            ...prev,
+            [orderId]: { type: 'info', message: 'Gerando QR Code PIX...' },
+          }))
+          const pixData = await createPixPayment(orderId)
+          generated[orderId] = {
+            qrCode: pixData?.qrCode ?? '',
+            qrCodeBase64: pixData?.qrCodeBase64 ?? '',
+            expiresIn: pixData?.expiresIn ?? 1800,
+          }
+          setActionFeedback((prev) => ({
+            ...prev,
+            [orderId]: { type: 'info', message: 'Aguardando pagamento via PIX...' },
+          }))
+        }
+        setPixStateByOrder((prev) => ({ ...prev, ...generated }))
+      }
       if (paymentMethod === 'point' || paymentMethod === 'card') {
         for (const order of createdOrders) {
           const orderId = getOrderId(order)
@@ -801,6 +856,8 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
           }
         }
         setSubmitFeedback({ type: 'success', message: 'Aguardando pagamento na maquininha...' })
+      } else if (paymentMethod === 'pix') {
+        setSubmitFeedback({ type: 'success', message: 'QR Code PIX gerado. Aguardando pagamento...' })
       } else {
         // dinheiro — confirmar direto
         for (const order of createdOrders) {
@@ -846,6 +903,52 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
       }))
     } finally {
       setSendingOrderId(null)
+    }
+  }
+
+  const handleGeneratePix = async (orderId) => {
+    try {
+      setSendingOrderId(orderId)
+      setActionFeedback((prev) => ({
+        ...prev,
+        [orderId]: { type: 'info', message: 'Gerando QR Code PIX...' },
+      }))
+      const pixData = await createPixPayment(orderId)
+      setPixStateByOrder((prev) => ({
+        ...prev,
+        [orderId]: {
+          qrCode: pixData?.qrCode ?? '',
+          qrCodeBase64: pixData?.qrCodeBase64 ?? '',
+          expiresIn: pixData?.expiresIn ?? 1800,
+        },
+      }))
+      setActionFeedback((prev) => ({
+        ...prev,
+        [orderId]: { type: 'info', message: 'Aguardando pagamento via PIX...' },
+      }))
+      await reloadOrders()
+    } catch (err) {
+      setActionFeedback((prev) => ({
+        ...prev,
+        [orderId]: { type: 'error', message: normalizeErrorMessage(err) },
+      }))
+    } finally {
+      setSendingOrderId(null)
+    }
+  }
+
+  const handleCopyPixCode = async (orderId) => {
+    const code = pixStateByOrder?.[orderId]?.qrCode
+    if (!code) return
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopyingOrderId(orderId)
+      setTimeout(() => setCopyingOrderId((current) => (current === orderId ? null : current)), 1500)
+    } catch (err) {
+      setActionFeedback((prev) => ({
+        ...prev,
+        [orderId]: { type: 'error', message: 'Nao foi possivel copiar o codigo PIX.' },
+      }))
     }
   }
 
@@ -1005,6 +1108,7 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
             <span>Forma de pagamento</span>
             <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
               <option value="point">Maquininha Point</option>
+              <option value="pix">Pix</option>
               <option value="dinheiro">Dinheiro</option>
             </select>
           </label>
@@ -1023,7 +1127,11 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
             <button className="primary-button" type="submit" disabled={submitting}>
               {submitting
                 ? 'Enviando...'
-                : (paymentMethod === 'dinheiro' ? 'Confirmar pedido' : 'Enviar para maquininha')}
+                : (paymentMethod === 'dinheiro'
+                  ? 'Confirmar pedido'
+                  : paymentMethod === 'pix'
+                    ? 'Gerar QR PIX'
+                    : 'Enviar para maquininha')}
             </button>
           </div>
         </form>
@@ -1056,6 +1164,7 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
               const status = getOrderStatus(order)
               const total = getOrderTotal(order)
               const feedback = actionFeedback[orderId]
+              const pixState = pixStateByOrder[orderId]
 
               return (
                 <div key={orderId ?? JSON.stringify(order)} className="soft-card">
@@ -1077,6 +1186,28 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
                     {feedback && (
                       <p className="text-xs text-espresso/60">{feedback.message}</p>
                     )}
+                    {isPaymentMethodPix(order) && pixState?.qrCodeBase64 && (
+                      <div className="mt-2 rounded-xl border border-[rgba(123,78,43,0.2)] bg-white/60 p-3">
+                        <p className="text-xs uppercase tracking-[0.15em] text-espresso/50">Pagamento PIX</p>
+                        <img
+                          src={`data:image/png;base64,${pixState.qrCodeBase64}`}
+                          alt="QR Code PIX"
+                          className="mt-2 h-40 w-40 rounded-lg border border-[rgba(123,78,43,0.15)] bg-white p-1"
+                        />
+                        <div className="mt-2 flex items-center gap-2">
+                          <button
+                            className="ghost-button small"
+                            type="button"
+                            onClick={() => handleCopyPixCode(orderId)}
+                          >
+                            {copyingOrderId === orderId ? '✓ Copiado!' : 'Copiar codigo PIX'}
+                          </button>
+                          <p className="text-xs text-espresso/60">
+                            Expira em ~{Math.max(1, Math.floor((pixState.expiresIn ?? 1800) / 60))} min
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-base font-semibold text-espresso">
@@ -1090,6 +1221,15 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
                         disabled={!orderId || sendingOrderId === orderId}
                       >
                         {sendingOrderId === orderId ? 'Confirmando...' : 'Confirmar pedido'}
+                      </button>
+                    ) : isPaymentMethodPix(order) ? (
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={() => handleGeneratePix(orderId)}
+                        disabled={!orderId || sendingOrderId === orderId}
+                      >
+                        {sendingOrderId === orderId ? 'Gerando...' : 'Gerar QR PIX'}
                       </button>
                     ) : (
                       <button

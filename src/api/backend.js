@@ -63,6 +63,13 @@ export async function createPosIntent(orderId) {
   })
 }
 
+export async function createPixPayment(orderId) {
+  return requestJson('/api/payments/mercadopago/pix/create', {
+    method: 'POST',
+    body: JSON.stringify({ orderId }),
+  })
+}
+
 export async function getPaymentIntentStatus(orderId) {
   return requestJson(`/api/payments/mercadopago/pos/intent-status/${orderId}`, { method: 'GET' })
 }
