@@ -6,6 +6,7 @@ import {
   addSlices,
   cancelOrder,
   confirmOrderCash,
+  createMercadoPagoPreference,
   createOrder,
   createPixPayment,
   createPosIntent,
@@ -38,6 +39,7 @@ function getPaymentMethodLabel(order) {
   const method = order?.paymentMethod ?? order?.payment_method ?? ''
   if (method === 'point' || method === 'card') return '\u{1F4B3} Point'
   if (method === 'pix') return '\u{1F4F1} Pix'
+  if (method === 'checkout_web' || method === 'mercadopago') return '\u{1F310} Checkout MP'
   if (method === 'dinheiro' || method === 'cash') return '\u{1F4B5} Dinheiro'
   return method || ''
 }
@@ -50,6 +52,11 @@ function isPaymentMethodCash(order) {
 function isPaymentMethodPix(order) {
   const method = order?.paymentMethod ?? order?.payment_method ?? ''
   return method === 'pix'
+}
+
+function isPaymentMethodCheckout(order) {
+  const method = order?.paymentMethod ?? order?.payment_method ?? ''
+  return method === 'checkout_web' || method === 'mercadopago'
 }
 
 function getOrderId(order) {
@@ -788,7 +795,9 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
   const pixStateByOrderRef = useRef(pixStateByOrder)
   const [copyingOrderId, setCopyingOrderId] = useState(null)
   const [cancelingOrderId, setCancelingOrderId] = useState(null)
+  const [checkingOutOrderId, setCheckingOutOrderId] = useState(null)
   const [actionFeedback, setActionFeedback] = useState({})
+  const checkoutPollingRef = useRef({})
 
   // Mantém a ref sincronizada (fallback para renderizações normais)
   useEffect(() => {
@@ -812,6 +821,8 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
     return () => {
       Object.values(pollingIntervalsRef.current).forEach((intervalId) => clearInterval(intervalId))
       pollingIntervalsRef.current = {}
+      Object.values(checkoutPollingRef.current).forEach((intervalId) => clearInterval(intervalId))
+      checkoutPollingRef.current = {}
     }
   }, [])
 
@@ -912,6 +923,10 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
       setSubmitFeedback({ type: 'error', message: 'Selecione ao menos um sabor.' })
       return
     }
+    if (paymentMethod === 'checkout_web' && validItems.length > 1) {
+      setSubmitFeedback({ type: 'error', message: 'Checkout Web suporta 1 item por pedido nesta tela.' })
+      return
+    }
     try {
       setSubmitting(true)
       setSubmitFeedback(null)
@@ -963,6 +978,21 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
           }
         }
         setSubmitFeedback({ type: 'success', message: 'Aguardando pagamento na maquininha...' })
+      } else if (paymentMethod === 'checkout_web') {
+        const firstOrderId = getOrderId(createdOrders[0])
+        if (firstOrderId) {
+          const pref = await createMercadoPagoPreference(firstOrderId)
+          const initPoint = pref?.initPoint ?? pref?.sandboxInitPoint
+          if (!initPoint) {
+            throw new Error('Checkout sem URL de pagamento.')
+          }
+          window.open(initPoint, '_blank', 'noopener,noreferrer')
+          setActionFeedback((prev) => ({
+            ...prev,
+            [firstOrderId]: { type: 'info', message: 'Checkout aberto. Aguardando confirmação...' },
+          }))
+        }
+        setSubmitFeedback({ type: 'success', message: 'Checkout Mercado Pago aberto em nova aba.' })
       } else if (paymentMethod === 'pix') {
         setSubmitFeedback({ type: 'success', message: 'QR Code PIX gerado. Aguardando pagamento...' })
       } else {
@@ -1043,6 +1073,74 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
       }))
     } finally {
       setSendingOrderId(null)
+    }
+  }
+
+  const pollCheckoutStatus = (orderId) => {
+    let attempts = 0
+    const maxAttempts = 100
+
+    if (checkoutPollingRef.current[orderId]) {
+      clearInterval(checkoutPollingRef.current[orderId])
+    }
+
+    const interval = setInterval(async () => {
+      attempts++
+      if (attempts > maxAttempts) {
+        clearInterval(interval)
+        delete checkoutPollingRef.current[orderId]
+        return
+      }
+      try {
+        const data = await getOrders()
+        const items = Array.isArray(data) ? data : data?.orders
+        const found = Array.isArray(items)
+          ? items.find((o) => String(getOrderId(o)) === String(orderId))
+          : null
+        const status = String(getOrderStatus(found)).toLowerCase()
+        if (status && status !== 'aguardando pagamento' && status !== 'pending') {
+          clearInterval(interval)
+          delete checkoutPollingRef.current[orderId]
+          setActionFeedback((prev) => ({
+            ...prev,
+            [orderId]: { type: 'success', message: '✓ Pagamento confirmado via Checkout Web!' },
+          }))
+          await reloadOrders()
+          await reloadReadyOrders()
+        }
+      } catch {
+        // segue tentando
+      }
+    }, 3000)
+
+    checkoutPollingRef.current[orderId] = interval
+  }
+
+  const handleOpenCheckoutWeb = async (orderId) => {
+    try {
+      setCheckingOutOrderId(orderId)
+      setActionFeedback((prev) => ({
+        ...prev,
+        [orderId]: { type: 'info', message: 'Gerando link de checkout...' },
+      }))
+      const pref = await createMercadoPagoPreference(orderId)
+      const initPoint = pref?.initPoint ?? pref?.sandboxInitPoint
+      if (!initPoint) {
+        throw new Error('Resposta sem URL de checkout.')
+      }
+      window.open(initPoint, '_blank', 'noopener,noreferrer')
+      setActionFeedback((prev) => ({
+        ...prev,
+        [orderId]: { type: 'info', message: 'Checkout aberto. Finalize o pagamento na nova aba.' },
+      }))
+      pollCheckoutStatus(orderId)
+    } catch (err) {
+      setActionFeedback((prev) => ({
+        ...prev,
+        [orderId]: { type: 'error', message: normalizeErrorMessage(err) },
+      }))
+    } finally {
+      setCheckingOutOrderId(null)
     }
   }
 
@@ -1212,6 +1310,7 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
             <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
               <option value="point">Maquininha Point</option>
               <option value="pix">Pix</option>
+              <option value="checkout_web">Checkout Web (MP)</option>
               <option value="dinheiro">Dinheiro</option>
             </select>
           </label>
@@ -1234,6 +1333,8 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
                   ? 'Confirmar pedido'
                   : paymentMethod === 'pix'
                     ? 'Gerar QR PIX'
+                    : paymentMethod === 'checkout_web'
+                      ? 'Abrir Checkout Web'
                     : 'Enviar para maquininha')}
             </button>
           </div>
@@ -1313,6 +1414,15 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
                         disabled={!orderId || sendingOrderId === orderId}
                       >
                         {sendingOrderId === orderId ? 'Confirmando...' : 'Confirmar pedido'}
+                      </button>
+                    ) : isPaymentMethodCheckout(order) ? (
+                      <button
+                        className="primary-button"
+                        type="button"
+                        onClick={() => handleOpenCheckoutWeb(orderId)}
+                        disabled={!orderId || checkingOutOrderId === orderId}
+                      >
+                        {checkingOutOrderId === orderId ? 'Abrindo...' : 'Abrir checkout'}
                       </button>
                     ) : isPaymentMethodPix(order) ? (
                       <button

@@ -63,6 +63,13 @@ export async function createPosIntent(orderId) {
   })
 }
 
+export async function createMercadoPagoPreference(orderId) {
+  return requestJson('/api/payments/mercadopago/preference', {
+    method: 'POST',
+    body: JSON.stringify({ orderId }),
+  })
+}
+
 // Extrai os campos de QR PIX de diferentes estruturas que o backend pode retornar
 export function extractPixQrData(data) {
   // Tenta campos diretos (backend normalizado)
