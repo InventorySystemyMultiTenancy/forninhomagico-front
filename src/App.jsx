@@ -784,9 +784,26 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
       return {}
     }
   })
+  // Ref sempre atualizado com o valor corrente — evita closures stale em effects
+  const pixStateByOrderRef = useRef(pixStateByOrder)
   const [copyingOrderId, setCopyingOrderId] = useState(null)
   const [cancelingOrderId, setCancelingOrderId] = useState(null)
   const [actionFeedback, setActionFeedback] = useState({})
+
+  // Mantém a ref sincronizada com o estado
+  useEffect(() => {
+    pixStateByOrderRef.current = pixStateByOrder
+    localStorage.setItem(PIX_STORAGE_KEY, JSON.stringify(pixStateByOrder))
+  }, [pixStateByOrder])
+
+  // Helper para atualizar estado E ref de forma atômica
+  const updatePixState = useCallback((updater) => {
+    setPixStateByOrder((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater
+      pixStateByOrderRef.current = next
+      return next
+    })
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -794,10 +811,6 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
       pollingIntervalsRef.current = {}
     }
   }, [])
-
-  useEffect(() => {
-    localStorage.setItem(PIX_STORAGE_KEY, JSON.stringify(pixStateByOrder))
-  }, [pixStateByOrder])
 
   const activePixOrderIds = useMemo(() => Object.keys(pixStateByOrder), [pixStateByOrder])
 
@@ -808,7 +821,7 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
 
   useEffect(() => {
     if (orders.length === 0) return
-    setPixStateByOrder((prev) => {
+    updatePixState((prev) => {
       const next = { ...prev }
       let changed = false
       for (const order of orders) {
@@ -823,29 +836,30 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
       }
       return changed ? next : prev
     })
-  }, [orders, PAID_STATUSES])
+  }, [orders, PAID_STATUSES, updatePixState])
 
-  // Auto-recuperação: para pedidos PIX aguardando pagamento sem QR no estado, busca do backend
+  // Auto-recuperação: usa a REF para checar estado atual (evita closure stale)
   useEffect(() => {
     const pixOrders = orders.filter(
       (o) => isPaymentMethodPix(o) && getOrderStatus(o) === 'aguardando pagamento'
     )
     for (const order of pixOrders) {
       const orderId = getOrderId(order)
-      if (!orderId || pixStateByOrder[orderId]) continue
+      // Usa ref para ver o estado ATUAL, não o do closure
+      if (!orderId || pixStateByOrderRef.current[orderId]) continue
       getPixQrCode(orderId)
         .then((data) => {
           console.log('[PIX] getPixQrCode resposta:', JSON.stringify(data))
           if (data && !data?.paid) {
             const extracted = extractPixQrData(data)
             if (extracted.qrCodeBase64) {
-              setPixStateByOrder((prev) => ({ ...prev, [orderId]: extracted }))
+              updatePixState((prev) => ({ ...prev, [orderId]: extracted }))
             }
           }
         })
-        .catch(() => { /* silencioso — endpoint pode retornar erro se não há qr */ })
+        .catch(() => { /* silencioso */ })
     }
-  }, [orders]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [orders, updatePixState])
 
   useEffect(() => {
     if (activePixOrderIds.length === 0) return undefined
@@ -931,7 +945,7 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
             }))
           }
         }
-        setPixStateByOrder((prev) => ({ ...prev, ...generated }))
+        updatePixState((prev) => ({ ...prev, ...generated }))
       }
       if (paymentMethod === 'point' || paymentMethod === 'card') {
         for (const order of createdOrders) {
@@ -1001,7 +1015,7 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
       console.log('[PIX] handleGeneratePix resposta:', JSON.stringify(pixData))
       const extracted = extractPixQrData(pixData)
       console.log('[PIX] campos extraídos:', extracted)
-      setPixStateByOrder((prev) => ({ ...prev, [orderId]: extracted }))
+      updatePixState((prev) => ({ ...prev, [orderId]: extracted }))
       if (!extracted.qrCodeBase64) {
         setActionFeedback((prev) => ({
           ...prev,
