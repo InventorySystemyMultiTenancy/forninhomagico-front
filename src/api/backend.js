@@ -63,6 +63,10 @@ export async function createPosIntent(orderId) {
   })
 }
 
+export async function getPaymentIntentStatus(orderId) {
+  return requestJson(`/api/payments/mercadopago/pos/intent-status/${orderId}`, { method: 'GET' })
+}
+
 export async function getFlavors() {
   return requestJson('/api/flavors', { method: 'GET' })
 }

@@ -13,6 +13,7 @@ import {
   getFlavors,
   getFinancials,
   getOrders,
+  getPaymentIntentStatus,
   getReadyOrders,
   getStats,
   markOrderReady,
@@ -739,6 +740,8 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
   const [submitFeedback, setSubmitFeedback] = useState(null)
 
   const [sendingOrderId, setSendingOrderId] = useState(null)
+  const [pollingOrderId, setPollingOrderId] = useState(null)
+  const [pollingIntervals, setPollingIntervals] = useState({})
   const [cancelingOrderId, setCancelingOrderId] = useState(null)
   const [actionFeedback, setActionFeedback] = useState({})
 
@@ -831,8 +834,10 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
       await createPosIntent(orderId)
       setActionFeedback((prev) => ({
         ...prev,
-        [orderId]: { type: 'success', message: 'Aguardando pagamento na maquininha...' },
+        [orderId]: { type: 'info', message: 'Confirme o pagamento na máquina...' },
       }))
+      setPollingOrderId(orderId)
+      pollPaymentStatus(orderId)
       await reloadOrders()
       await reloadReadyOrders()
     } catch (err) {
@@ -843,6 +848,54 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
     } finally {
       setSendingOrderId(null)
     }
+  }
+
+  const pollPaymentStatus = (orderId) => {
+    let attempts = 0
+    const maxAttempts = 150 // 5 min × 60 seg / 2 seg por tentativa
+
+    const interval = setInterval(async () => {
+      attempts++
+
+      if (attempts > maxAttempts) {
+        clearInterval(interval)
+        setPollingIntervals((prev) => {
+          const next = { ...prev }
+          delete next[orderId]
+          return next
+        })
+        setActionFeedback((prev) => ({
+          ...prev,
+          [orderId]: { type: 'error', message: 'Timeout. Recarregue a página ou tente novamente.' },
+        }))
+        return
+      }
+
+      try {
+        const data = await getPaymentIntentStatus(orderId)
+        if (data.success && data.orderStatus === 'em montagem') {
+          clearInterval(interval)
+          setPollingIntervals((prev) => {
+            const next = { ...prev }
+            delete next[orderId]
+            return next
+          })
+          setActionFeedback((prev) => ({
+            ...prev,
+            [orderId]: { type: 'success', message: '✓ Pagamento confirmado! Preparando...' },
+          }))
+          setPollingOrderId(null)
+          await reloadOrders()
+          await reloadReadyOrders()
+        }
+        // Se ainda 'aguardando pagamento', continua polling
+      } catch (err) {
+        // Silenciosamente continua tentando
+        console.warn('Erro ao verificar status do pagamento:', err)
+      }
+    }, 2000) // a cada 2 segundos
+
+    setPollingIntervals((prev) => ({ ...prev, [orderId]: interval }))
   }
 
   const handleConfirmCash = async (orderId) => {
