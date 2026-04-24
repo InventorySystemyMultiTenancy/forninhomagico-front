@@ -799,6 +799,11 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
 
   const activePixOrderIds = useMemo(() => Object.keys(pixStateByOrder), [pixStateByOrder])
 
+  const PAID_STATUSES = useMemo(
+    () => new Set(['em montagem', 'pronto', 'retirado', 'cancelado', 'paid', 'pago', 'concluido', 'concluído']),
+    []
+  )
+
   useEffect(() => {
     if (orders.length === 0) return
     setPixStateByOrder((prev) => {
@@ -807,15 +812,16 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
       for (const order of orders) {
         const orderId = getOrderId(order)
         if (!orderId || !next[orderId]) continue
-        const status = getOrderStatus(order)
-        if (status && status !== 'aguardando pagamento') {
+        const status = String(getOrderStatus(order)).toLowerCase().trim()
+        // Só remove o QR quando o status indica claramente que o pedido foi pago/processado
+        if (status && PAID_STATUSES.has(status)) {
           delete next[orderId]
           changed = true
         }
       }
       return changed ? next : prev
     })
-  }, [orders])
+  }, [orders, PAID_STATUSES])
 
   useEffect(() => {
     if (activePixOrderIds.length === 0) return undefined
