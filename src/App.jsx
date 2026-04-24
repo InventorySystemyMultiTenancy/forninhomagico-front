@@ -790,19 +790,22 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
   const [cancelingOrderId, setCancelingOrderId] = useState(null)
   const [actionFeedback, setActionFeedback] = useState({})
 
-  // Mantém a ref sincronizada com o estado
+  // Mantém a ref sincronizada (fallback para renderizações normais)
   useEffect(() => {
     pixStateByOrderRef.current = pixStateByOrder
     localStorage.setItem(PIX_STORAGE_KEY, JSON.stringify(pixStateByOrder))
   }, [pixStateByOrder])
 
-  // Helper para atualizar estado E ref de forma atômica
-  const updatePixState = useCallback((updater) => {
-    setPixStateByOrder((prev) => {
-      const next = typeof updater === 'function' ? updater(prev) : updater
-      pixStateByOrderRef.current = next
-      return next
-    })
+  // IMPORTANTE: atualiza ref IMEDIATAMENTE (síncrono, antes de qualquer await),
+  // depois agenda o update do estado React para re-render.
+  const updatePixState = useCallback((updaterOrValue) => {
+    const next =
+      typeof updaterOrValue === 'function'
+        ? updaterOrValue(pixStateByOrderRef.current)
+        : updaterOrValue
+    pixStateByOrderRef.current = next
+    localStorage.setItem(PIX_STORAGE_KEY, JSON.stringify(next))
+    setPixStateByOrder(next)
   }, [])
 
   useEffect(() => {
@@ -850,7 +853,12 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
       getPixQrCode(orderId)
         .then((data) => {
           console.log('[PIX] getPixQrCode resposta:', JSON.stringify(data))
-          if (data && !data?.paid) {
+          // Backend pode retornar paid:true com status:"pending" incorretamente.
+          // Considera não-pago se status ainda for pending/aguardando ou se tiver qrCodeBase64
+          const backendStatusIsPending =
+            data?.status === 'pending' || data?.status === 'aguardando pagamento'
+          const isActuallyPaid = data?.paid && !backendStatusIsPending
+          if (data && !isActuallyPaid) {
             const extracted = extractPixQrData(data)
             if (extracted.qrCodeBase64) {
               updatePixState((prev) => ({ ...prev, [orderId]: extracted }))
