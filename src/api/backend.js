@@ -63,6 +63,25 @@ export async function createPosIntent(orderId) {
   })
 }
 
+// Extrai os campos de QR PIX de diferentes estruturas que o backend pode retornar
+export function extractPixQrData(data) {
+  // Tenta campos diretos (backend normalizado)
+  const qrCode =
+    data?.qrCode ??
+    data?.qr_code ??
+    data?.point_of_interaction?.transaction_data?.qr_code ??
+    data?.transaction_data?.qr_code ??
+    ''
+  const qrCodeBase64 =
+    data?.qrCodeBase64 ??
+    data?.qr_code_base64 ??
+    data?.point_of_interaction?.transaction_data?.qr_code_base64 ??
+    data?.transaction_data?.qr_code_base64 ??
+    ''
+  const expiresIn = data?.expiresIn ?? data?.expires_in ?? data?.date_of_expiration ?? 1800
+  return { qrCode, qrCodeBase64, expiresIn }
+}
+
 export async function createPixPayment(orderId) {
   return requestJson('/api/payments/mercadopago/pix/create', {
     method: 'POST',

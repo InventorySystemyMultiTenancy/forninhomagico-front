@@ -9,6 +9,7 @@ import {
   createOrder,
   createPixPayment,
   createPosIntent,
+  extractPixQrData,
   getPixQrCode,
   deleteCost,
   getCosts,
@@ -834,15 +835,12 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
       if (!orderId || pixStateByOrder[orderId]) continue
       getPixQrCode(orderId)
         .then((data) => {
-          if (data?.success && !data?.paid && data?.qrCode) {
-            setPixStateByOrder((prev) => ({
-              ...prev,
-              [orderId]: {
-                qrCode: data.qrCode ?? '',
-                qrCodeBase64: data.qrCodeBase64 ?? '',
-                expiresIn: 1800,
-              },
-            }))
+          console.log('[PIX] getPixQrCode resposta:', JSON.stringify(data))
+          if (data && !data?.paid) {
+            const extracted = extractPixQrData(data)
+            if (extracted.qrCodeBase64) {
+              setPixStateByOrder((prev) => ({ ...prev, [orderId]: extracted }))
+            }
           }
         })
         .catch(() => { /* silencioso — endpoint pode retornar erro se não há qr */ })
@@ -917,15 +915,21 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
             [orderId]: { type: 'info', message: 'Gerando QR Code PIX...' },
           }))
           const pixData = await createPixPayment(orderId)
-          generated[orderId] = {
-            qrCode: pixData?.qrCode ?? '',
-            qrCodeBase64: pixData?.qrCodeBase64 ?? '',
-            expiresIn: pixData?.expiresIn ?? 1800,
+          console.log('[PIX] createPixPayment resposta:', JSON.stringify(pixData))
+          const extracted = extractPixQrData(pixData)
+          console.log('[PIX] campos extraídos:', extracted)
+          generated[orderId] = extracted
+          if (!extracted.qrCodeBase64) {
+            setActionFeedback((prev) => ({
+              ...prev,
+              [orderId]: { type: 'error', message: 'QR PIX gerado mas imagem vazia. Verifique o console.' },
+            }))
+          } else {
+            setActionFeedback((prev) => ({
+              ...prev,
+              [orderId]: { type: 'info', message: 'Aguardando pagamento via PIX...' },
+            }))
           }
-          setActionFeedback((prev) => ({
-            ...prev,
-            [orderId]: { type: 'info', message: 'Aguardando pagamento via PIX...' },
-          }))
         }
         setPixStateByOrder((prev) => ({ ...prev, ...generated }))
       }
@@ -994,18 +998,21 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
         [orderId]: { type: 'info', message: 'Gerando QR Code PIX...' },
       }))
       const pixData = await createPixPayment(orderId)
-      setPixStateByOrder((prev) => ({
-        ...prev,
-        [orderId]: {
-          qrCode: pixData?.qrCode ?? '',
-          qrCodeBase64: pixData?.qrCodeBase64 ?? '',
-          expiresIn: pixData?.expiresIn ?? 1800,
-        },
-      }))
-      setActionFeedback((prev) => ({
-        ...prev,
-        [orderId]: { type: 'info', message: 'Aguardando pagamento via PIX...' },
-      }))
+      console.log('[PIX] handleGeneratePix resposta:', JSON.stringify(pixData))
+      const extracted = extractPixQrData(pixData)
+      console.log('[PIX] campos extraídos:', extracted)
+      setPixStateByOrder((prev) => ({ ...prev, [orderId]: extracted }))
+      if (!extracted.qrCodeBase64) {
+        setActionFeedback((prev) => ({
+          ...prev,
+          [orderId]: { type: 'error', message: 'QR PIX sem imagem. Verifique o console (F12).' },
+        }))
+      } else {
+        setActionFeedback((prev) => ({
+          ...prev,
+          [orderId]: { type: 'info', message: 'Aguardando pagamento via PIX...' },
+        }))
+      }
       await reloadOrders()
     } catch (err) {
       setActionFeedback((prev) => ({
