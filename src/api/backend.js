@@ -16,23 +16,6 @@ export function setStoredAuthToken(token) {
 export function clearStoredAuthToken() {
   localStorage.removeItem(AUTH_STORAGE_KEY)
 }
-const AUTH_STORAGE_KEY = 'forninho_auth_token'
-
-export function getStoredAuthToken() {
-  return localStorage.getItem(AUTH_STORAGE_KEY) || ''
-}
-
-export function setStoredAuthToken(token) {
-  if (token) {
-    localStorage.setItem(AUTH_STORAGE_KEY, token)
-  } else {
-    localStorage.removeItem(AUTH_STORAGE_KEY)
-  }
-}
-
-export function clearStoredAuthToken() {
-  localStorage.removeItem(AUTH_STORAGE_KEY)
-}
 
 async function readResponseBody(response) {
   const contentType = response.headers.get('content-type') || ''
@@ -40,31 +23,6 @@ async function readResponseBody(response) {
     return response.json()
   }
   return response.text()
-}
-
-export async function loginUser({ username, password }) {
-  return requestJson('/api/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ username, password }),
-  })
-}
-
-export async function signupUser({ username, name, password, phone }) {
-  return requestJson('/api/auth/signup', {
-    method: 'POST',
-    body: JSON.stringify({ username, name, password, phone }),
-  })
-}
-
-export async function changePasswordByPhone({ phone, newPassword }) {
-  return requestJson('/api/auth/change-password', {
-    method: 'POST',
-    body: JSON.stringify({ phone, newPassword }),
-  })
-}
-
-export async function getCurrentUser() {
-  return requestJson('/api/auth/me', { method: 'GET' })
 }
 
 function buildErrorMessage(response, body) {
