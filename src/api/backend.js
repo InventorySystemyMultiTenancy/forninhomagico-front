@@ -69,6 +69,20 @@ export async function loginUser({ username, password }) {
   })
 }
 
+export async function signupUser({ username, name, password, phone }) {
+  return requestJson('/api/auth/signup', {
+    method: 'POST',
+    body: JSON.stringify({ username, name, password, phone }),
+  })
+}
+
+export async function changePasswordByPhone({ phone, newPassword }) {
+  return requestJson('/api/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ phone, newPassword }),
+  })
+}
+
 export async function getCurrentUser() {
   return requestJson('/api/auth/me', { method: 'GET' })
 }
