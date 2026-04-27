@@ -1,4 +1,21 @@
 const API_BASE = import.meta.env.VITE_API_URL ?? ''
+const AUTH_STORAGE_KEY = 'forninho_auth_token'
+
+export function getStoredAuthToken() {
+  return localStorage.getItem(AUTH_STORAGE_KEY) || ''
+}
+
+export function setStoredAuthToken(token) {
+  if (token) {
+    localStorage.setItem(AUTH_STORAGE_KEY, token)
+  } else {
+    localStorage.removeItem(AUTH_STORAGE_KEY)
+  }
+}
+
+export function clearStoredAuthToken() {
+  localStorage.removeItem(AUTH_STORAGE_KEY)
+}
 
 async function readResponseBody(response) {
   const contentType = response.headers.get('content-type') || ''
@@ -20,9 +37,11 @@ function buildErrorMessage(response, body) {
 
 async function requestJson(path, options = {}) {
   const fullUrl = `${API_BASE}${path}`
+  const token = getStoredAuthToken()
   const response = await fetch(fullUrl, {
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers || {}),
     },
     ...options,
@@ -38,6 +57,17 @@ async function requestJson(path, options = {}) {
   }
 
   return readResponseBody(response)
+}
+
+export async function loginUser({ username, password }) {
+  return requestJson('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+export async function getCurrentUser() {
+  return requestJson('/api/auth/me', { method: 'GET' })
 }
 
 export async function getStats() {

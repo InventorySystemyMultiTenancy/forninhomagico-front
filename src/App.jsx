@@ -1,17 +1,20 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import {
   addCost,
   addFlavor,
   addSlices,
   cancelOrder,
+  clearStoredAuthToken,
   confirmOrderCash,
   createMercadoPagoPreference,
   createOrder,
   createPixPayment,
   createPosIntent,
   extractPixQrData,
+  getCurrentUser,
   getPixQrCode,
+  getStoredAuthToken,
   deleteCost,
   getCosts,
   getFlavors,
@@ -20,8 +23,10 @@ import {
   getPaymentIntentStatus,
   getReadyOrders,
   getStats,
+  loginUser,
   markOrderReady,
   pickupOrder,
+  setStoredAuthToken,
   updateFlavor,
   uploadImage,
 } from './api/backend'
@@ -31,9 +36,12 @@ const navItems = [
   { to: '/sabores', label: 'Sabores e produtos' },
   { to: '/vender', label: 'Vender' },
   { to: '/cozinha', label: 'Cozinha' },
-  { to: '/acompanhamento', label: 'Acompanhamento' },
   { to: '/relatorio', label: 'Relatorio' },
 ]
+
+function isAdminRole(role) {
+  return String(role || '').toUpperCase() === 'ADMIN'
+}
 
 function getPaymentMethodLabel(order) {
   const method = order?.paymentMethod ?? order?.payment_method ?? ''
@@ -207,12 +215,18 @@ const PixQrPanel = memo(function PixQrPanel({ pixState, onCopy, copied }) {
   )
 })
 
-function useOrdersData() {
+function useOrdersData(enabled = true) {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const loadOrders = useCallback(async (showLoading = true) => {
+    if (!enabled) {
+      setOrders([])
+      setError('')
+      setLoading(false)
+      return
+    }
     try {
       if (showLoading) setLoading(true)
       setError('')
@@ -225,7 +239,7 @@ function useOrdersData() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [enabled])
 
   useEffect(() => {
     loadOrders()
@@ -234,12 +248,18 @@ function useOrdersData() {
   return { orders, loading, error, reload: loadOrders }
 }
 
-function useReadyOrders() {
+function useReadyOrders(enabled = true) {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const loadReadyOrders = useCallback(async (showLoading = true) => {
+    if (!enabled) {
+      setOrders([])
+      setError('')
+      setLoading(false)
+      return
+    }
     try {
       if (showLoading) setLoading(true)
       setError('')
@@ -252,13 +272,14 @@ function useReadyOrders() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [enabled])
 
   useEffect(() => {
+    if (!enabled) return undefined
     loadReadyOrders()
     const interval = setInterval(() => loadReadyOrders(false), 5000)
     return () => clearInterval(interval)
-  }, [loadReadyOrders])
+  }, [enabled, loadReadyOrders])
 
   return { orders, loading, error, reload: loadReadyOrders }
 }
@@ -290,12 +311,18 @@ function useFlavors() {
   return { flavors, loading, error, reload: loadFlavors }
 }
 
-function useFinancials() {
+function useFinancials(enabled = true) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
+    if (!enabled) {
+      setData(null)
+      setError('')
+      setLoading(false)
+      return
+    }
     try {
       setLoading(true)
       setError('')
@@ -306,18 +333,24 @@ function useFinancials() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [enabled])
 
   useEffect(() => { load() }, [load])
   return { data, loading, error, reload: load }
 }
 
-function useStats() {
+function useStats(enabled = true) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
+    if (!enabled) {
+      setData(null)
+      setError('')
+      setLoading(false)
+      return
+    }
     try {
       setLoading(true)
       setError('')
@@ -328,18 +361,24 @@ function useStats() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [enabled])
 
   useEffect(() => { load() }, [load])
   return { data, loading, error, reload: load }
 }
 
-function useCosts() {
+function useCosts(enabled = true) {
   const [costs, setCosts] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const load = useCallback(async () => {
+    if (!enabled) {
+      setCosts([])
+      setError('')
+      setLoading(false)
+      return
+    }
     try {
       setLoading(true)
       setError('')
@@ -351,18 +390,18 @@ function useCosts() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [enabled])
 
   useEffect(() => { load() }, [load])
   return { costs, loading, error, reload: load }
 }
 
-function DashboardPage({ stats, loadingStats, errorStats, flavors, loadingFlavors }) {
+function DashboardPage({ stats, loadingStats, errorStats, flavors, loadingFlavors, canViewStats, onShareTracking }) {
   return (
     <section className="flex flex-col gap-8 animate-fade-in">
       <header className="card">
         <div className="flex flex-wrap items-center gap-3">
-          <span className="pill">SaaS de confeitaria</span>
+          <span className="pill">PRAÇA DA TOCO</span>
           <span className="pill pill-dark">Vendas presenciais</span>
           <span className="pill pill-outline">Mercado Pago</span>
         </div>
@@ -371,41 +410,52 @@ function DashboardPage({ stats, loadingStats, errorStats, flavors, loadingFlavor
             Forninho Mágico da Ana
           </h1>
           <p className="mt-4 max-w-xl text-base text-espresso/70">
-            Dashboard para vendas, estoque de fatias e controle de lucro.
-            Cada venda gera um codigo de 3 digitos para acompanhar o pedido.
+            {canViewStats
+              ? 'Dashboard para vendas, estoque de fatias e controle de lucro.'
+              : 'Catálogo de sabores e acompanhamento de pedidos prontos.'}
           </p>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <NavLink className="ghost-button" to="/acompanhamento">
+              Abrir acompanhamento
+            </NavLink>
+            <button className="ghost-button" type="button" onClick={onShareTracking}>
+              Compartilhar acompanhamento
+            </button>
+          </div>
         </div>
       </header>
-      {errorStats && (
+      {canViewStats && errorStats && (
         <div className="card">
           <p className="text-sm text-espresso/70">{errorStats}</p>
         </div>
       )}
-      <div className="grid gap-4 sm:grid-cols-3">
-        <div className="stat-card">
-          <p className="stat-label">Total de pedidos</p>
-          <p className="stat-value">
-            {loadingStats ? 'Carregando...' : (stats?.totalOrders ?? '—')}
-          </p>
-          <p className="stat-sub">Exclui cancelados</p>
+      {canViewStats && (
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div className="stat-card">
+            <p className="stat-label">Total de pedidos</p>
+            <p className="stat-value">
+              {loadingStats ? 'Carregando...' : (stats?.totalOrders ?? '—')}
+            </p>
+            <p className="stat-sub">Exclui cancelados</p>
+          </div>
+          <div className="stat-card">
+            <p className="stat-label">Pedidos pagos</p>
+            <p className="stat-value">
+              {loadingStats ? 'Carregando...' : (stats?.paidOrders ?? '—')}
+            </p>
+            <p className="stat-sub">Status confirmado no backend</p>
+          </div>
+          <div className="stat-card">
+            <p className="stat-label">Aguardando pagamento</p>
+            <p className="stat-value">
+              {loadingStats ? 'Carregando...' : (stats?.pendingOrders ?? '—')}
+            </p>
+            <p className="stat-sub">
+              {stats?.cancelledOrders != null ? `${stats.cancelledOrders} cancelado(s)` : 'Pagamento pendente'}
+            </p>
+          </div>
         </div>
-        <div className="stat-card">
-          <p className="stat-label">Pedidos pagos</p>
-          <p className="stat-value">
-            {loadingStats ? 'Carregando...' : (stats?.paidOrders ?? '—')}
-          </p>
-          <p className="stat-sub">Status confirmado no backend</p>
-        </div>
-        <div className="stat-card">
-          <p className="stat-label">Aguardando pagamento</p>
-          <p className="stat-value">
-            {loadingStats ? 'Carregando...' : (stats?.pendingOrders ?? '—')}
-          </p>
-          <p className="stat-sub">
-            {stats?.cancelledOrders != null ? `${stats.cancelledOrders} cancelado(s)` : 'Pagamento pendente'}
-          </p>
-        </div>
-      </div>
+      )}
       <div className="card">
         <h2 className="section-title">Sabores disponíveis</h2>
         <p className="section-sub">Fatias disponíveis por sabor.</p>
@@ -449,7 +499,7 @@ function DashboardPage({ stats, loadingStats, errorStats, flavors, loadingFlavor
   )
 }
 
-function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
+function FlavorsPage({ flavors, loading, error, reloadFlavors, canManageFlavors }) {
   const [showNewFlavor, setShowNewFlavor] = useState(false)
   const [newFlavor, setNewFlavor] = useState({ name: '', price: '', slicesTotal: '' })
   const [newFlavorImageFile, setNewFlavorImageFile] = useState(null)
@@ -561,19 +611,23 @@ function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
           <div>
             <h2 className="section-title">Sabores e produtos</h2>
             <p className="section-sub">
-              Controle a quantidade de fatias disponiveis por sabor.
+              {canManageFlavors
+                ? 'Controle a quantidade de fatias disponiveis por sabor.'
+                : 'Visualização dos sabores disponíveis.'}
             </p>
           </div>
-          <button
-            className="ghost-button"
-            type="button"
-            onClick={() => { setShowNewFlavor((v) => !v); setFlavorFormError('') }}
-          >
-            {showNewFlavor ? 'Cancelar' : 'Cadastrar sabor'}
-          </button>
+          {canManageFlavors && (
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => { setShowNewFlavor((v) => !v); setFlavorFormError('') }}
+            >
+              {showNewFlavor ? 'Cancelar' : 'Cadastrar sabor'}
+            </button>
+          )}
         </div>
 
-        {showNewFlavor && (
+        {canManageFlavors && showNewFlavor && (
           <form onSubmit={handleSaveFlavor} className="mt-6 grid gap-4 rounded-2xl border border-[rgba(123,78,43,0.2)] bg-white/60 p-5">
             <p className="text-xs uppercase tracking-[0.2em] text-espresso/50">Novo sabor</p>
             <div className="grid gap-4 sm:grid-cols-3">
@@ -655,9 +709,10 @@ function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
                 <div className="flex items-start gap-4">
                   {/* thumbnail */}
                   <div
-                    className="flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-xl border border-[rgba(123,78,43,0.15)] bg-[rgba(229,200,169,0.25)]"
-                    title="Clique para alterar imagem"
+                    className={`flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[rgba(123,78,43,0.15)] bg-[rgba(229,200,169,0.25)] ${canManageFlavors ? 'cursor-pointer' : ''}`}
+                    title={canManageFlavors ? 'Clique para alterar imagem' : ''}
                     onClick={() => {
+                      if (!canManageFlavors) return
                       if (isEditingImage) {
                         if (editImagePreview) URL.revokeObjectURL(editImagePreview)
                         setEditingImageFor(null)
@@ -693,7 +748,7 @@ function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
                 </div>
 
                 {/* Formulario de editar imagem */}
-                {isEditingImage && (
+                {canManageFlavors && isEditingImage && (
                   <div className="mt-3 flex flex-col gap-2 rounded-xl border border-[rgba(123,78,43,0.2)] bg-white/60 p-3">
                     <p className="text-xs uppercase tracking-[0.15em] text-espresso/50">Nova imagem</p>
                     <div className="flex flex-wrap items-center gap-2">
@@ -743,7 +798,7 @@ function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
                       </p>
                     </div>
                   )}
-                  {isAddingHere ? (
+                  {canManageFlavors && isAddingHere ? (
                     <div className="flex items-center gap-2">
                       <input
                         type="number"
@@ -768,7 +823,7 @@ function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
                         Cancelar
                       </button>
                     </div>
-                  ) : (
+                  ) : canManageFlavors ? (
                     <button
                       className="ghost-button small"
                       type="button"
@@ -776,7 +831,7 @@ function FlavorsPage({ flavors, loading, error, reloadFlavors }) {
                     >
                       Adicionar fatias
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </div>
             )
@@ -813,6 +868,8 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
   const [checkingOutOrderId, setCheckingOutOrderId] = useState(null)
   const [actionFeedback, setActionFeedback] = useState({})
   const checkoutPollingRef = useRef({})
+  const pixQrLookupBlockedRef = useRef({})
+  const pixQrLookupInFlightRef = useRef({})
 
   // Mantém a ref sincronizada (fallback para renderizações normais)
   useEffect(() => {
@@ -876,6 +933,10 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
       const orderId = getOrderId(order)
       // Usa ref para ver o estado ATUAL, não o do closure
       if (!orderId || pixStateByOrderRef.current[orderId]) continue
+      if (pixQrLookupBlockedRef.current[orderId]) continue
+      if (pixQrLookupInFlightRef.current[orderId]) continue
+
+      pixQrLookupInFlightRef.current[orderId] = true
       getPixQrCode(orderId)
         .then((data) => {
           console.log('[PIX] getPixQrCode resposta:', JSON.stringify(data))
@@ -887,11 +948,20 @@ function SalesPage({ orders, loading, error, flavors, reloadOrders, reloadReadyO
           if (data && !isActuallyPaid) {
             const extracted = extractPixQrData(data)
             if (extracted.qrCodeBase64) {
+              delete pixQrLookupBlockedRef.current[orderId]
               updatePixState((prev) => ({ ...prev, [orderId]: extracted }))
             }
           }
         })
-        .catch(() => { /* silencioso */ })
+        .catch((err) => {
+          // Se o backend não tem QR para esse pedido, evita ficar repetindo 404 em loop.
+          if (err?.status === 404) {
+            pixQrLookupBlockedRef.current[orderId] = true
+          }
+        })
+        .finally(() => {
+          delete pixQrLookupInFlightRef.current[orderId]
+        })
     }
   }, [orders, updatePixState])
 
@@ -1666,7 +1736,7 @@ function KitchenPage({ orders, loading, error, reloadOrders }) {
   )
 }
 
-function TrackingPage({ readyOrders, loading, error }) {
+function TrackingPage({ readyOrders, loading, error, showBackButton = false, onBack }) {
   const visibleReadyOrders = useMemo(
     () =>
       readyOrders
@@ -1679,6 +1749,16 @@ function TrackingPage({ readyOrders, loading, error }) {
   return (
     <section className="grid gap-8 animate-fade-in">
       <div className="card">
+        {showBackButton && (
+          <button
+            className="ghost-button small"
+            type="button"
+            onClick={onBack}
+            aria-label="Voltar para login"
+          >
+            ← Voltar
+          </button>
+        )}
         <h2 className="section-title">Pedidos prontos</h2>
         <p className="section-sub">
           Mostre os codigos para retirada no balcao.
@@ -1907,13 +1987,95 @@ function ReportPage({ financials, costsData, loadingFinancials, loadingCosts, er
   )
 }
 
-function AppLayout() {
-  const ordersState = useOrdersData()
-  const readyOrdersState = useReadyOrders()
+function LoginPage({ onLogin, loginError, loggingIn }) {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const nextPath = new URLSearchParams(location.search).get('next') || '/'
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    const ok = await onLogin({ username: username.trim(), password })
+    if (ok) navigate(nextPath, { replace: true })
+  }
+
+  return (
+    <div className="min-h-screen bg-app px-6 py-10">
+      <div className="mx-auto w-full max-w-md card">
+        <h1 className="section-title">Entrar</h1>
+        <p className="section-sub">Faça login para acessar o dashboard interno.</p>
+        <form onSubmit={handleSubmit} className="mt-6 grid gap-3">
+          <label className="field">
+            <span>Usuário</span>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+            />
+          </label>
+          <label className="field">
+            <span>Senha</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </label>
+          {loginError && <p className="text-sm text-espresso/70">{loginError}</p>}
+          <button className="primary-button" type="submit" disabled={loggingIn}>
+            {loggingIn ? 'Entrando...' : 'Entrar'}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function TrackingStandalonePage() {
+  const readyOrdersState = useReadyOrders(true)
+  const navigate = useNavigate()
+  return (
+    <div className="min-h-screen bg-app px-6 py-8 text-slate-900">
+      <div className="mx-auto w-full max-w-7xl">
+        <TrackingPage
+          readyOrders={readyOrdersState.orders}
+          loading={readyOrdersState.loading}
+          error={readyOrdersState.error}
+          showBackButton
+          onBack={() => navigate('/login?next=/', { replace: true })}
+        />
+      </div>
+    </div>
+  )
+}
+
+function AppLayout({ user, onLogout }) {
+  const role = user?.role ?? user?.user?.role ?? ''
+  const isAdmin = isAdminRole(role)
+  const ordersState = useOrdersData(isAdmin)
+  const readyOrdersState = useReadyOrders(isAdmin)
   const flavorsState = useFlavors()
-  const statsState = useStats()
-  const financialsState = useFinancials()
-  const costsState = useCosts()
+  const statsState = useStats(isAdmin)
+  const financialsState = useFinancials(isAdmin)
+  const costsState = useCosts(isAdmin)
+
+  const visibleNavItems = useMemo(() => {
+    if (isAdmin) return navItems
+    return navItems.filter((item) => item.to === '/' || item.to === '/sabores')
+  }, [isAdmin])
+
+  const handleShareTracking = useCallback(async () => {
+    const url = `${window.location.origin}/acompanhamento`
+    try {
+      await navigator.clipboard.writeText(url)
+      window.alert('Link de acompanhamento copiado!')
+    } catch {
+      window.prompt('Copie o link abaixo:', url)
+    }
+  }, [])
 
   return (
     <div className="min-h-screen bg-app text-slate-900">
@@ -1926,9 +2088,10 @@ function AppLayout() {
             <h2 className="text-xl font-display uppercase tracking-[0.12em] text-espresso">
               Forninho Mágico
             </h2>
+            <p className="text-xs text-espresso/60">{isAdmin ? 'Perfil ADMIN' : 'Usuário comum'}</p>
           </div>
           <nav className="mt-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-            {navItems.map((item) => (
+            {visibleNavItems.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
@@ -1941,6 +2104,9 @@ function AppLayout() {
               </NavLink>
             ))}
           </nav>
+          <button className="ghost-button mt-6" type="button" onClick={onLogout}>
+            Sair
+          </button>
         </aside>
         <main className="flex-1">
           <Routes>
@@ -1953,6 +2119,8 @@ function AppLayout() {
                   errorStats={statsState.error}
                   flavors={flavorsState.flavors}
                   loadingFlavors={flavorsState.loading}
+                  canViewStats={isAdmin}
+                  onShareTracking={handleShareTracking}
                 />
               }
             />
@@ -1964,12 +2132,13 @@ function AppLayout() {
                   loading={flavorsState.loading}
                   error={flavorsState.error}
                   reloadFlavors={flavorsState.reload}
+                  canManageFlavors={isAdmin}
                 />
               }
             />
             <Route
               path="/vender"
-              element={
+              element={isAdmin ? (
                 <SalesPage
                   orders={ordersState.orders}
                   loading={ordersState.loading}
@@ -1978,32 +2147,22 @@ function AppLayout() {
                   reloadOrders={ordersState.reload}
                   reloadReadyOrders={readyOrdersState.reload}
                 />
-              }
+              ) : <Navigate to="/" replace />}
             />
             <Route
               path="/cozinha"
-              element={
+              element={isAdmin ? (
                 <KitchenPage
                   orders={ordersState.orders}
                   loading={ordersState.loading}
                   error={ordersState.error}
                   reloadOrders={ordersState.reload}
                 />
-              }
-            />
-            <Route
-              path="/acompanhamento"
-              element={
-                <TrackingPage
-                  readyOrders={readyOrdersState.orders}
-                  loading={readyOrdersState.loading}
-                  error={readyOrdersState.error}
-                />
-              }
+              ) : <Navigate to="/" replace />}
             />
             <Route
               path="/relatorio"
-              element={
+              element={isAdmin ? (
                 <ReportPage
                   financials={financialsState.data}
                   costsData={costsState.costs}
@@ -2014,8 +2173,9 @@ function AppLayout() {
                   reloadFinancials={financialsState.reload}
                   reloadCosts={costsState.reload}
                 />
-              }
+              ) : <Navigate to="/" replace />}
             />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
       </div>
@@ -2024,9 +2184,85 @@ function AppLayout() {
 }
 
 function App() {
+  const [authUser, setAuthUser] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [loginError, setLoginError] = useState('')
+  const [loggingIn, setLoggingIn] = useState(false)
+
+  useEffect(() => {
+    const bootstrapAuth = async () => {
+      const token = getStoredAuthToken()
+      if (!token) {
+        setAuthLoading(false)
+        return
+      }
+      try {
+        const me = await getCurrentUser()
+        const user = me?.user ?? me
+        setAuthUser(user)
+      } catch {
+        clearStoredAuthToken()
+        setAuthUser(null)
+      } finally {
+        setAuthLoading(false)
+      }
+    }
+    bootstrapAuth()
+  }, [])
+
+  const handleLogin = useCallback(async ({ username, password }) => {
+    try {
+      setLoggingIn(true)
+      setLoginError('')
+      const result = await loginUser({ username, password })
+      const token = result?.token ?? result?.accessToken ?? ''
+      if (!token) throw new Error('Token não recebido no login.')
+      setStoredAuthToken(token)
+      const user = result?.user ?? (await getCurrentUser())?.user ?? null
+      setAuthUser(user)
+      return true
+    } catch (err) {
+      clearStoredAuthToken()
+      setAuthUser(null)
+      setLoginError(normalizeErrorMessage(err))
+      return false
+    } finally {
+      setLoggingIn(false)
+    }
+  }, [])
+
+  const handleLogout = useCallback(() => {
+    clearStoredAuthToken()
+    setAuthUser(null)
+  }, [])
+
   return (
     <BrowserRouter>
-      <AppLayout />
+      <Routes>
+        <Route
+          path="/login"
+          element={
+            authUser
+              ? <Navigate to="/" replace />
+              : (
+                <LoginPage
+                  onLogin={handleLogin}
+                  loginError={loginError}
+                  loggingIn={loggingIn}
+                />
+              )
+          }
+        />
+        <Route path="/acompanhamento" element={<TrackingStandalonePage />} />
+        <Route
+          path="/*"
+          element={
+            authLoading
+              ? <div className="min-h-screen bg-app px-6 py-10 text-espresso">Carregando...</div>
+              : (authUser ? <AppLayout user={authUser} onLogout={handleLogout} /> : <Navigate to="/login?next=/" replace />)
+          }
+        />
+      </Routes>
     </BrowserRouter>
   )
 }
