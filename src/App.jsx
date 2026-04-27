@@ -2309,6 +2309,7 @@ function TrackingStandalonePage() {
 
 function AppLayout({ user, onLogout }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [qrOpen, setQrOpen] = useState(false)
   const role = user?.role ?? user?.user?.role ?? ''
   const isAdmin = isAdminRole(role)
   const ordersState = useOrdersData(isAdmin)
@@ -2324,12 +2325,27 @@ function AppLayout({ user, onLogout }) {
   }, [isAdmin])
 
   const handleShareTracking = useCallback(async () => {
+    // Abre modal com QR code fixo apontando para /acompanhamento
+    setQrOpen(true)
+    // opcional: copia o link também
     const url = `${window.location.origin}/acompanhamento`
-    try {
-      await navigator.clipboard.writeText(url)
-      window.alert('Link de acompanhamento copiado!')
-    } catch {
-      window.prompt('Copie o link abaixo:', url)
+    try { await navigator.clipboard.writeText(url) } catch { /* ignore */ }
+  }, [])
+
+  const printQr = useCallback(() => {
+    const qrData = window.location.origin + '/acompanhamento'
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&data=${encodeURIComponent(qrData)}`
+    const w = window.open('', '_blank')
+    if (!w) return
+    const html = `<!doctype html><html><head><title>QR Code</title><style>body{display:flex;align-items:center;justify-content:center;height:100vh;margin:0}img{max-width:90vw;max-height:90vh}</style></head><body><img src="${qrUrl}" alt="QR code"/></body></html>`
+    w.document.open()
+    w.document.write(html)
+    w.document.close()
+    // Aguarda carregar e imprime
+    w.onload = () => {
+      try { w.print() } catch (e) { /* ignore */ }
+      // fecha após um curto período
+      setTimeout(() => { try { w.close() } catch (e) {} }, 500)
     }
   }, [])
 
@@ -2354,6 +2370,32 @@ function AppLayout({ user, onLogout }) {
           className="fixed inset-0 z-40 bg-black/30 lg:hidden"
           onClick={() => setMenuOpen(false)}
         />
+      )}
+
+      {/* Modal QR code de acompanhamento */}
+      {qrOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/40 z-40" onClick={() => setQrOpen(false)} />
+          <div className="bg-white card z-50 relative p-6 rounded-md max-w-sm mx-4 shadow-lg">
+            <h3 className="text-lg font-medium mb-4">Acompanhar pedidos</h3>
+            <img
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(window.location.origin + '/acompanhamento')}`}
+              alt="QR code de acompanhamento"
+              className="mx-auto"
+            />
+            <p className="text-sm mt-4 text-espresso/70 text-center">Leia este QR code para abrir a aba de acompanhamento.</p>
+            <div className="mt-4 flex justify-center gap-2">
+              <button className="ghost-button" onClick={printQr}>Imprimir</button>
+              <button
+                className="primary-button"
+                onClick={() => { navigator.clipboard?.writeText(window.location.origin + '/acompanhamento'); setQrOpen(false) }}
+              >
+                Copiar link
+              </button>
+              <button className="ghost-button" onClick={() => setQrOpen(false)}>Fechar</button>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-8 lg:flex-row">
