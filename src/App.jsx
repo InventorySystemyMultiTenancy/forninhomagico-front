@@ -485,58 +485,6 @@ function AuthPanel({ title, description, children, footer }) {
   )
 }
 
-function LoginPage({ onLogin, loading, error }) {
-  const navigate = useNavigate()
-  const location = useLocation()
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [fieldErrors, setFieldErrors] = useState({})
-
-  const nextPath = new URLSearchParams(location.search).get('next') || '/'
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    const validation = validateLoginForm({ username, password })
-    if (validation) {
-      setFieldErrors(validation)
-      return
-    }
-    setFieldErrors({})
-    const ok = await onLogin({ username: username.trim(), password, nextPath })
-    if (ok) navigate(nextPath, { replace: true })
-  }
-
-  return (
-    <AuthPanel
-      title="Entrar"
-      description="Faça login para acessar o dashboard interno."
-      footer={(
-        <div className="mt-6 flex flex-col gap-2 text-sm text-espresso/70">
-          <Link className="ghost-button small text-center" to="/signup">Criar nova conta</Link>
-          <Link className="ghost-button small text-center" to="/change-password">Esqueci minha senha</Link>
-        </div>
-      )}
-    >
-      <form onSubmit={handleSubmit} className="mt-6 grid gap-3">
-        <label className="field">
-          <span>Username</span>
-          <input value={username} onChange={(e) => setUsername(e.target.value)} type="text" />
-          {fieldErrors.username && <small className="text-xs text-espresso/70">{fieldErrors.username}</small>}
-        </label>
-        <label className="field">
-          <span>Password</span>
-          <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" />
-          {fieldErrors.password && <small className="text-xs text-espresso/70">{fieldErrors.password}</small>}
-        </label>
-        {error && <p className="text-sm text-espresso/70">{error}</p>}
-        <button className="primary-button" type="submit" disabled={loading}>
-          {loading ? 'Entrando...' : 'Entrar'}
-        </button>
-      </form>
-    </AuthPanel>
-  )
-}
-
 function SignupPage({ onSignup, loading, error }) {
   const navigate = useNavigate()
   const [form, setForm] = useState({ username: '', name: '', phone: '', password: '', confirmPassword: '' })
