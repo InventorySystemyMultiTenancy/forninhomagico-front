@@ -1,10 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { BrowserRouter, Link, Navigate, NavLink, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import {
   addCost,
   addFlavor,
   addSlices,
   cancelOrder,
+  changePasswordByPhone,
   clearStoredAuthToken,
   confirmOrderCash,
   createMercadoPagoPreference,
@@ -27,6 +28,7 @@ import {
   markOrderReady,
   pickupOrder,
   setStoredAuthToken,
+  signupUser,
   updateFlavor,
   uploadImage,
 } from './api/backend'
@@ -69,6 +71,21 @@ function isPaymentMethodCheckout(order) {
 
 function getOrderId(order) {
   return order?.id ?? order?.orderId ?? order?.order_id ?? null
+}
+
+function getOrderFlavorName(order) {
+  return order?.flavorName ?? order?.flavor_name ?? ''
+}
+
+function getOrderFlavorQty(order) {
+  const qty =
+    order?.flavorQty ??
+    order?.flavor_qty ??
+    order?.qty ??
+    order?.quantity ??
+    1
+  const parsed = Number(qty)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1
 }
 
 function getOrderStatus(order) {
@@ -188,6 +205,62 @@ function normalizeErrorMessage(error) {
     return error
   }
   return error.message || 'Erro ao comunicar com o backend'
+}
+
+function formatPhone(value) {
+  const numbers = String(value || '').replace(/\D/g, '').slice(0, 11)
+  if (numbers.length <= 2) {
+    return numbers ? `(${numbers}` : ''
+  }
+  if (numbers.length <= 6) {
+    return `(${numbers.slice(0, 2)}) ${numbers.slice(2)}`
+  }
+  return `(${numbers.slice(0, 2)}) ${numbers.slice(2, 7)}-${numbers.slice(7)}`
+}
+
+function onlyDigits(value) {
+  return String(value || '').replace(/\D/g, '')
+}
+
+function validateLoginForm(data) {
+  const errors = {}
+  if (!data.username?.trim()) errors.username = 'Informe o usuário'
+  if (!data.password) errors.password = 'Informe a senha'
+  return Object.keys(errors).length ? errors : null
+}
+
+function validateSignupForm(data) {
+  const errors = {}
+  if (!data.username || data.username.length < 3 || data.username.length > 30) {
+    errors.username = 'Username deve ter 3-30 caracteres'
+  }
+  if (!data.name || data.name.length < 2 || data.name.length > 100) {
+    errors.name = 'Nome deve ter 2-100 caracteres'
+  }
+  if (!data.phone || !/^\d{10,11}$/.test(onlyDigits(data.phone))) {
+    errors.phone = 'Telefone deve ter 10 ou 11 dígitos'
+  }
+  if (!data.password || data.password.length < 6) {
+    errors.password = 'Senha deve ter no mínimo 6 caracteres'
+  }
+  if (data.password !== data.confirmPassword) {
+    errors.confirmPassword = 'Senhas não conferem'
+  }
+  return Object.keys(errors).length ? errors : null
+}
+
+function validateChangePasswordForm(data) {
+  const errors = {}
+  if (!data.phone || !/^\d{10,11}$/.test(onlyDigits(data.phone))) {
+    errors.phone = 'Telefone deve ter 10 ou 11 dígitos'
+  }
+  if (!data.newPassword || data.newPassword.length < 6) {
+    errors.newPassword = 'Senha deve ter no mínimo 6 caracteres'
+  }
+  if (data.newPassword !== data.confirmPassword) {
+    errors.confirmPassword = 'Senhas não conferem'
+  }
+  return Object.keys(errors).length ? errors : null
 }
 
 const PIX_STORAGE_KEY = 'forninho_pix_state_v1'
@@ -394,6 +467,202 @@ function useCosts(enabled = true) {
 
   useEffect(() => { load() }, [load])
   return { costs, loading, error, reload: load }
+}
+
+function AuthPanel({ title, description, children, footer }) {
+  return (
+    <div className="min-h-screen bg-app px-6 py-10">
+      <div className="mx-auto w-full max-w-md card">
+        <div className="space-y-2">
+          <p className="pill pill-outline w-fit">Forninho Mágico</p>
+          <h1 className="section-title">{title}</h1>
+          <p className="section-sub">{description}</p>
+        </div>
+        {children}
+        {footer}
+      </div>
+    </div>
+  )
+}
+
+function LoginPage({ onLogin, loading, error }) {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({})
+
+  const nextPath = new URLSearchParams(location.search).get('next') || '/'
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    const validation = validateLoginForm({ username, password })
+    if (validation) {
+      setFieldErrors(validation)
+      return
+    }
+    setFieldErrors({})
+    const ok = await onLogin({ username: username.trim(), password, nextPath })
+    if (ok) navigate(nextPath, { replace: true })
+  }
+
+  return (
+    <AuthPanel
+      title="Entrar"
+      description="Faça login para acessar o dashboard interno."
+      footer={(
+        <div className="mt-6 flex flex-col gap-2 text-sm text-espresso/70">
+          <Link className="ghost-button small text-center" to="/signup">Criar nova conta</Link>
+          <Link className="ghost-button small text-center" to="/change-password">Esqueci minha senha</Link>
+        </div>
+      )}
+    >
+      <form onSubmit={handleSubmit} className="mt-6 grid gap-3">
+        <label className="field">
+          <span>Username</span>
+          <input value={username} onChange={(e) => setUsername(e.target.value)} type="text" />
+          {fieldErrors.username && <small className="text-xs text-espresso/70">{fieldErrors.username}</small>}
+        </label>
+        <label className="field">
+          <span>Password</span>
+          <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" />
+          {fieldErrors.password && <small className="text-xs text-espresso/70">{fieldErrors.password}</small>}
+        </label>
+        {error && <p className="text-sm text-espresso/70">{error}</p>}
+        <button className="primary-button" type="submit" disabled={loading}>
+          {loading ? 'Entrando...' : 'Entrar'}
+        </button>
+      </form>
+    </AuthPanel>
+  )
+}
+
+function SignupPage({ onSignup, loading, error }) {
+  const navigate = useNavigate()
+  const [form, setForm] = useState({ username: '', name: '', phone: '', password: '', confirmPassword: '' })
+  const [fieldErrors, setFieldErrors] = useState({})
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    const validation = validateSignupForm(form)
+    if (validation) {
+      setFieldErrors(validation)
+      return
+    }
+    setFieldErrors({})
+    const ok = await onSignup({ ...form })
+    if (ok) navigate('/', { replace: true })
+  }
+
+  return (
+    <AuthPanel
+      title="Criar nova conta"
+      description="Cadastre um novo usuário com telefone validado."
+      footer={(
+        <div className="mt-6 flex flex-col gap-2 text-sm text-espresso/70">
+          <Link className="ghost-button small text-center" to="/login">Já tenho conta, fazer login</Link>
+          <Link className="ghost-button small text-center" to="/change-password">Esqueci minha senha</Link>
+        </div>
+      )}
+    >
+      <form onSubmit={handleSubmit} className="mt-6 grid gap-3">
+        <label className="field">
+          <span>Username</span>
+          <input value={form.username} onChange={(e) => setForm((p) => ({ ...p, username: e.target.value }))} type="text" />
+          {fieldErrors.username && <small className="text-xs text-espresso/70">{fieldErrors.username}</small>}
+        </label>
+        <label className="field">
+          <span>Nome Completo</span>
+          <input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} type="text" />
+          {fieldErrors.name && <small className="text-xs text-espresso/70">{fieldErrors.name}</small>}
+        </label>
+        <label className="field">
+          <span>Telefone</span>
+          <input
+            value={form.phone}
+            onChange={(e) => setForm((p) => ({ ...p, phone: formatPhone(e.target.value) }))}
+            type="text"
+            inputMode="numeric"
+            placeholder="(11) 98765-4321"
+          />
+          {fieldErrors.phone && <small className="text-xs text-espresso/70">{fieldErrors.phone}</small>}
+        </label>
+        <label className="field">
+          <span>Senha</span>
+          <input value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} type="password" />
+          {fieldErrors.password && <small className="text-xs text-espresso/70">{fieldErrors.password}</small>}
+        </label>
+        <label className="field">
+          <span>Confirmar Senha</span>
+          <input value={form.confirmPassword} onChange={(e) => setForm((p) => ({ ...p, confirmPassword: e.target.value }))} type="password" />
+          {fieldErrors.confirmPassword && <small className="text-xs text-espresso/70">{fieldErrors.confirmPassword}</small>}
+        </label>
+        {error && <p className="text-sm text-espresso/70">{error}</p>}
+        <button className="primary-button" type="submit" disabled={loading}>
+          {loading ? 'Cadastrando...' : 'Cadastrar'}
+        </button>
+      </form>
+    </AuthPanel>
+  )
+}
+
+function ChangePasswordPage({ onChangePassword, loading, error }) {
+  const navigate = useNavigate()
+  const [form, setForm] = useState({ phone: '', newPassword: '', confirmPassword: '' })
+  const [fieldErrors, setFieldErrors] = useState({})
+
+  const handleSubmit = async (e) => {
+    e.preventDefault()
+    const validation = validateChangePasswordForm(form)
+    if (validation) {
+      setFieldErrors(validation)
+      return
+    }
+    setFieldErrors({})
+    const ok = await onChangePassword({ ...form })
+    if (ok) navigate('/', { replace: true })
+  }
+
+  return (
+    <AuthPanel
+      title="Alterar senha"
+      description="Recupere o acesso usando o telefone cadastrado."
+      footer={(
+        <div className="mt-6 flex flex-col gap-2 text-sm text-espresso/70">
+          <Link className="ghost-button small text-center" to="/login">Voltar ao login</Link>
+          <Link className="ghost-button small text-center" to="/signup">Criar nova conta</Link>
+        </div>
+      )}
+    >
+      <form onSubmit={handleSubmit} className="mt-6 grid gap-3">
+        <label className="field">
+          <span>Telefone</span>
+          <input
+            value={form.phone}
+            onChange={(e) => setForm((p) => ({ ...p, phone: formatPhone(e.target.value) }))}
+            type="text"
+            inputMode="numeric"
+            placeholder="(11) 98765-4321"
+          />
+          {fieldErrors.phone && <small className="text-xs text-espresso/70">{fieldErrors.phone}</small>}
+        </label>
+        <label className="field">
+          <span>Nova Senha</span>
+          <input value={form.newPassword} onChange={(e) => setForm((p) => ({ ...p, newPassword: e.target.value }))} type="password" />
+          {fieldErrors.newPassword && <small className="text-xs text-espresso/70">{fieldErrors.newPassword}</small>}
+        </label>
+        <label className="field">
+          <span>Confirmar Senha</span>
+          <input value={form.confirmPassword} onChange={(e) => setForm((p) => ({ ...p, confirmPassword: e.target.value }))} type="password" />
+          {fieldErrors.confirmPassword && <small className="text-xs text-espresso/70">{fieldErrors.confirmPassword}</small>}
+        </label>
+        {error && <p className="text-sm text-espresso/70">{error}</p>}
+        <button className="primary-button" type="submit" disabled={loading}>
+          {loading ? 'Alterando...' : 'Alterar Senha'}
+        </button>
+      </form>
+    </AuthPanel>
+  )
 }
 
 function DashboardPage({ stats, loadingStats, errorStats, flavors, loadingFlavors, canViewStats, onShareTracking }) {
@@ -1606,6 +1875,8 @@ function KitchenPage({ orders, loading, error, reloadOrders }) {
           )}
           {inProgressOrders.map((order) => {
             const orderId = getOrderId(order)
+            const flavorName = getOrderFlavorName(order)
+            const flavorQty = getOrderFlavorQty(order)
             const status = getOrderStatus(order)
             const total = getOrderTotal(order)
             const paymentCode = getPaymentCode(order)
@@ -1622,8 +1893,14 @@ function KitchenPage({ orders, loading, error, reloadOrders }) {
                       Codigo: {paymentCode}
                     </p>
                   )}
+                  {flavorName && (
+                    <p className="section-title text-sm font-bold text-espresso/70">
+                      {flavorName} · {flavorQty} fatia{flavorQty > 1 ? 's' : ''}
+                    </p>
+                  )}
+
                   {order?.customerName && (
-                    <p className="text-sm text-espresso/70">{order.customerName}</p>
+                    <p className="text-sm font-bold text-espresso/70">{order.customerName}</p>
                   )}
                   <p className="text-sm text-espresso/60">
                     Status: {status || 'Sem status'}
@@ -1659,6 +1936,8 @@ function KitchenPage({ orders, loading, error, reloadOrders }) {
             <div className="mt-3 space-y-3">
               {readyOrders.map((order) => {
                 const orderId = getOrderId(order)
+                const flavorName = getOrderFlavorName(order)
+                const flavorQty = getOrderFlavorQty(order)
                 const paymentCode = getPaymentCode(order)
                 const total = getOrderTotal(order)
                 const feedback = markFeedback[orderId]
@@ -1671,8 +1950,13 @@ function KitchenPage({ orders, loading, error, reloadOrders }) {
                       {paymentCode && (
                         <p className="text-sm font-semibold text-espresso">Codigo: {paymentCode}</p>
                       )}
+                      {flavorName && (
+                        <p className="text-sm font-bold text-espresso/70">
+                          {flavorName} · {flavorQty} fatia{flavorQty > 1 ? 's' : ''}
+                        </p>
+                      )}
                       {order?.customerName && (
-                        <p className="text-sm text-espresso/70">{order.customerName}</p>
+                        <p className="text-sm font-bold text-espresso/70">{order.customerName}</p>
                       )}
                       {feedback && (
                         <p className="text-xs text-espresso/60 mt-1">{feedback}</p>
@@ -1707,6 +1991,8 @@ function KitchenPage({ orders, loading, error, reloadOrders }) {
             <div className="mt-3 space-y-3">
               {waitingOrders.map((order) => {
                 const orderId = getOrderId(order)
+                const flavorName = getOrderFlavorName(order)
+                const flavorQty = getOrderFlavorQty(order)
                 const status = getOrderStatus(order)
                 const total = getOrderTotal(order)
                 return (
@@ -1715,6 +2001,11 @@ function KitchenPage({ orders, loading, error, reloadOrders }) {
                       <p className="text-xs uppercase tracking-[0.2em] text-espresso/50">
                         Pedido #{orderId ?? 'Sem ID'}
                       </p>
+                      {flavorName && (
+                        <p className="text-sm text-espresso/70">
+                          {flavorName} · {flavorQty} fatia{flavorQty > 1 ? 's' : ''}
+                        </p>
+                      )}
                       {order?.customerName && (
                         <p className="text-sm text-espresso/70">{order.customerName}</p>
                       )}
@@ -2186,8 +2477,25 @@ function AppLayout({ user, onLogout }) {
 function App() {
   const [authUser, setAuthUser] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
-  const [loginError, setLoginError] = useState('')
+  const [authError, setAuthError] = useState('')
   const [loggingIn, setLoggingIn] = useState(false)
+  const [signingUp, setSigningUp] = useState(false)
+  const [changingPassword, setChangingPassword] = useState(false)
+
+  const saveAuthSession = useCallback((result) => {
+    const token = result?.token ?? result?.accessToken ?? ''
+    const user = result?.user ?? null
+    if (token) setStoredAuthToken(token)
+    if (user) localStorage.setItem('forninho_auth_user', JSON.stringify(user))
+    setAuthUser(user)
+    return Boolean(token && user)
+  }, [])
+
+  const clearAuthSession = useCallback(() => {
+    clearStoredAuthToken()
+    localStorage.removeItem('forninho_auth_user')
+    setAuthUser(null)
+  }, [])
 
   useEffect(() => {
     const bootstrapAuth = async () => {
@@ -2199,42 +2507,91 @@ function App() {
       try {
         const me = await getCurrentUser()
         const user = me?.user ?? me
+        if (user) {
+          localStorage.setItem('forninho_auth_user', JSON.stringify(user))
+        }
         setAuthUser(user)
       } catch {
-        clearStoredAuthToken()
-        setAuthUser(null)
+        clearAuthSession()
       } finally {
         setAuthLoading(false)
       }
     }
     bootstrapAuth()
-  }, [])
+  }, [clearAuthSession])
+
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      clearAuthSession()
+      setAuthError('Sua sessão expirou. Faça login novamente.')
+    }
+    window.addEventListener('forninho:auth-expired', handleAuthExpired)
+    return () => window.removeEventListener('forninho:auth-expired', handleAuthExpired)
+  }, [clearAuthSession])
 
   const handleLogin = useCallback(async ({ username, password }) => {
     try {
       setLoggingIn(true)
-      setLoginError('')
+      setAuthError('')
       const result = await loginUser({ username, password })
-      const token = result?.token ?? result?.accessToken ?? ''
-      if (!token) throw new Error('Token não recebido no login.')
-      setStoredAuthToken(token)
-      const user = result?.user ?? (await getCurrentUser())?.user ?? null
-      setAuthUser(user)
-      return true
+      const user = result?.user ?? null
+      const normalized = { ...result, user }
+      if (!normalized.user && normalized.token) {
+        const me = await getCurrentUser()
+        normalized.user = me?.user ?? me ?? null
+      }
+      return saveAuthSession(normalized)
     } catch (err) {
-      clearStoredAuthToken()
-      setAuthUser(null)
-      setLoginError(normalizeErrorMessage(err))
+      clearAuthSession()
+      setAuthError(normalizeErrorMessage(err))
       return false
     } finally {
       setLoggingIn(false)
     }
-  }, [])
+  }, [clearAuthSession, saveAuthSession])
+
+  const handleSignup = useCallback(async ({ username, name, password, phone }) => {
+    try {
+      setSigningUp(true)
+      setAuthError('')
+      const result = await signupUser({
+        username: username.trim(),
+        name: name.trim(),
+        password,
+        phone: onlyDigits(phone),
+      })
+      return saveAuthSession(result)
+    } catch (err) {
+      clearAuthSession()
+      setAuthError(normalizeErrorMessage(err))
+      return false
+    } finally {
+      setSigningUp(false)
+    }
+  }, [clearAuthSession, saveAuthSession])
+
+  const handleChangePassword = useCallback(async ({ phone, newPassword }) => {
+    try {
+      setChangingPassword(true)
+      setAuthError('')
+      const result = await changePasswordByPhone({
+        phone: onlyDigits(phone),
+        newPassword,
+      })
+      return saveAuthSession(result)
+    } catch (err) {
+      clearAuthSession()
+      setAuthError(normalizeErrorMessage(err))
+      return false
+    } finally {
+      setChangingPassword(false)
+    }
+  }, [clearAuthSession, saveAuthSession])
 
   const handleLogout = useCallback(() => {
-    clearStoredAuthToken()
-    setAuthUser(null)
-  }, [])
+    clearAuthSession()
+    setAuthError('')
+  }, [clearAuthSession])
 
   return (
     <BrowserRouter>
@@ -2247,8 +2604,36 @@ function App() {
               : (
                 <LoginPage
                   onLogin={handleLogin}
-                  loginError={loginError}
+                  loginError={authError}
                   loggingIn={loggingIn}
+                />
+              )
+          }
+        />
+        <Route
+          path="/signup"
+          element={
+            authUser
+              ? <Navigate to="/" replace />
+              : (
+                <SignupPage
+                  onSignup={handleSignup}
+                  loading={signingUp}
+                  error={authError}
+                />
+              )
+          }
+        />
+        <Route
+          path="/change-password"
+          element={
+            authUser
+              ? <Navigate to="/" replace />
+              : (
+                <ChangePasswordPage
+                  onChangePassword={handleChangePassword}
+                  loading={changingPassword}
+                  error={authError}
                 />
               )
           }
