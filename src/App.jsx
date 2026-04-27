@@ -2241,33 +2241,49 @@ function LoginPage({ onLogin, loginError, loggingIn }) {
 
   return (
     <div className="min-h-screen bg-app px-6 py-10">
-      <div className="mx-auto w-full max-w-md card">
-        <h1 className="section-title">Entrar</h1>
-        <p className="section-sub">Faça login para acessar o dashboard interno.</p>
-        <form onSubmit={handleSubmit} className="mt-6 grid gap-3">
-          <label className="field">
-            <span>Usuário</span>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-            />
-          </label>
-          <label className="field">
-            <span>Senha</span>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          </label>
-          {loginError && <p className="text-sm text-espresso/70">{loginError}</p>}
-          <button className="primary-button" type="submit" disabled={loggingIn}>
-            {loggingIn ? 'Entrando...' : 'Entrar'}
-          </button>
-        </form>
+      <div className="mx-auto w-full max-w-md">
+        <div className="card space-y-2 mb-6">
+          <p className="pill pill-outline w-fit">Forninho Mágico</p>
+          <h1 className="section-title">Entrar</h1>
+          <p className="section-sub">Acesse o dashboard com suas credenciais.</p>
+        </div>
+        <div className="card">
+          <form onSubmit={handleSubmit} className="grid gap-3">
+            <label className="field">
+              <span>Usuário</span>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="seu_usuario"
+                required
+              />
+            </label>
+            <label className="field">
+              <span>Senha</span>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••"
+                required
+              />
+            </label>
+            {loginError && <p className="text-sm text-espresso/70">{loginError}</p>}
+            <button className="primary-button" type="submit" disabled={loggingIn}>
+              {loggingIn ? 'Entrando...' : 'Entrar'}
+            </button>
+          </form>
+          <div className="divider mt-6" />
+          <div className="mt-6 grid gap-2">
+            <Link className="primary-button text-center" to="/signup">
+              Criar nova conta
+            </Link>
+            <Link className="ghost-button text-center" to="/change-password">
+              Recuperar senha por telefone
+            </Link>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -2292,6 +2308,7 @@ function TrackingStandalonePage() {
 }
 
 function AppLayout({ user, onLogout }) {
+  const [menuOpen, setMenuOpen] = useState(false)
   const role = user?.role ?? user?.user?.role ?? ''
   const isAdmin = isAdminRole(role)
   const ordersState = useOrdersData(isAdmin)
@@ -2318,8 +2335,29 @@ function AppLayout({ user, onLogout }) {
 
   return (
     <div className="min-h-screen bg-app text-slate-900">
+      {/* Hambúrguer para mobile */}
+      <div className="flex items-center gap-3 px-6 py-4 lg:hidden border-b border-espresso/10">
+        <button
+          type="button"
+          onClick={() => setMenuOpen(!menuOpen)}
+          className="text-2xl text-espresso hover:text-espresso/70 transition"
+          aria-label="Toggle menu"
+        >
+          ☰
+        </button>
+        <h1 className="font-display uppercase tracking-[0.12em] text-espresso">Forninho Mágico</h1>
+      </div>
+
+      {/* Overlay para fechar menu ao clicar */}
+      {menuOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/30 lg:hidden"
+          onClick={() => setMenuOpen(false)}
+        />
+      )}
+
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-8 lg:flex-row">
-        <aside className="sidebar card lg:w-64">
+        <aside className={`sidebar card lg:relative lg:w-64 lg:translate-x-0 absolute left-0 top-[76px] w-72 z-50 transition-transform duration-200 ${menuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
           <div className="flex flex-col gap-2">
             <p className="text-xs uppercase tracking-[0.4em] text-espresso/60">
               Navegação
@@ -2335,6 +2373,7 @@ function AppLayout({ user, onLogout }) {
                 key={item.to}
                 to={item.to}
                 end={item.to === '/'}
+                onClick={() => setMenuOpen(false)}
                 className={({ isActive }) =>
                   `nav-link ${isActive ? 'nav-link-active' : ''}`
                 }
